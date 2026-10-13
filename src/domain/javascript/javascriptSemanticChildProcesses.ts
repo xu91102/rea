@@ -11,6 +11,7 @@ import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
 import { semanticStaticPropertyName } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
+  isUnshadowedGlobal,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
@@ -210,6 +211,15 @@ const childInteraction = (
   if (classification === null) return null;
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
+  const signalName =
+    kind !== "signal"
+      ? null
+      : node.arguments.length === 0 ||
+          (node.arguments[0] !== undefined &&
+            isUnshadowedGlobal(node.arguments[0], state, "undefined"))
+        ? "SIGTERM"
+        : dataEffectLiteralString(node.arguments[0]);
+
   return {
     interactionId: `child:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     kind,
@@ -221,13 +231,11 @@ const childInteraction = (
       .map((candidate) => spawnId(candidate))
       .sort(compareUnicodeCodePoints),
     eventName: kind === "listener" ? eventName : null,
-    signalName:
-      kind === "signal"
-        ? (dataEffectLiteralString(node.arguments[0]) ?? "SIGTERM")
-        : null,
+    signalName,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
     resolution:
+      (kind !== "signal" || signalName !== null) &&
       linked.length === 1 &&
       !linked[0]?.projectedResultBindings.some(
         ({ bindingId }) => bindingId === binding?.bindingId,

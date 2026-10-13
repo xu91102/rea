@@ -23,6 +23,7 @@ interface ChildUnknownInput {
     | "listens-error"
   )[];
   readonly detail: string;
+  readonly reason: "unknown-value" | "ambiguous-target";
   readonly candidateNodeIds: readonly string[];
 }
 
@@ -119,6 +120,7 @@ const projectSpawn = (
       node: child,
       location: spawn.location,
       relationKinds: ["spawns"],
+      reason: "unknown-value",
       detail: `Static ${spawn.method} command remains unresolved.`,
       candidateNodeIds: [],
     });
@@ -176,7 +178,14 @@ const projectInteraction = (
             ? "listens-exit"
             : "listens-error",
       ],
-      detail: `Static child ${interaction.method} ownership is ambiguous.`,
+      reason:
+        interaction.kind === "signal" && interaction.signalName === null
+          ? "unknown-value"
+          : "ambiguous-target",
+      detail:
+        interaction.kind === "signal" && interaction.signalName === null
+          ? "Static child kill signal remains unresolved; process candidates are retained."
+          : `Static child ${interaction.method} ownership is ambiguous.`,
       candidateNodeIds: children.map(({ node_id: identifier }) => identifier),
     });
 };
@@ -219,8 +228,15 @@ const addSignalNode = (
   });
 
 const addChildUnknown = (input: ChildUnknownInput): void => {
-  const { context, node, location, relationKinds, detail, candidateNodeIds } =
-    input;
+  const {
+    context,
+    node,
+    location,
+    relationKinds,
+    detail,
+    reason,
+    candidateNodeIds,
+  } = input;
   addSemanticGraphUnknown(
     context.state,
     createJavaScriptSemanticGraphUnknown(
@@ -228,7 +244,7 @@ const addChildUnknown = (input: ChildUnknownInput): void => {
         node_id: node?.node_id ?? null,
         family: "child-process",
         relation_kinds: relationKinds,
-        reason: "ambiguous-target",
+        reason,
         detail,
         candidate_node_ids: candidateNodeIds,
         evidence: unknownSemanticEvidence(context.file, location),
