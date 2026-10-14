@@ -29,6 +29,112 @@ const HASH = {
 } as const;
 const EVIDENCE_ID = `ev_${"a".repeat(64)}`;
 
+describe("inventoried JSON source comparison", () => {
+  it.each([
+    { inventory: "complete", present: true, status: "unchanged" },
+    { inventory: "partial", present: true, status: "unchanged" },
+    { inventory: "complete", present: false, status: "removed" },
+    { inventory: "partial", present: false, status: "unknown" },
+  ] as const)(
+    "matches an inventoried JSON file with $inventory history, present=$present",
+    ({ inventory, present, status }) => {
+      const node = createJavaScriptApplicationNode({
+        kind: "artifact",
+        identity: {
+          strategy: "content-digest",
+          stability: "global-exact",
+          sha256: HASH.unchanged,
+        },
+        observations: [
+          {
+            label: "src/data.json",
+            properties: { path: "src/data.json", file_kind: "json" },
+            evidence: artifactEvidence(HASH.unchanged, "src/data.json"),
+          },
+        ],
+      });
+      const root = createJavaScriptApplicationNode({
+        kind: "artifact",
+        identity: {
+          strategy: "content-digest",
+          stability: "global-exact",
+          sha256: HASH.artifact,
+        },
+        observations: [
+          {
+            label: "application",
+            properties: {},
+            evidence: artifactEvidence(HASH.artifact, "application.asar"),
+          },
+        ],
+      });
+      const result = comparePathToNodes(
+        "src/data.json",
+        present ? [node, root] : [root],
+        inventory,
+      );
+      expect(item(result, "src/data.json")).toMatchObject({
+        status,
+        confidence: present
+          ? "exact"
+          : inventory === "complete"
+            ? "high"
+            : "unknown",
+        current_node_ids: present ? [node.node_id] : [],
+        candidates: present
+          ? [
+              expect.objectContaining({
+                current_node_id: node.node_id,
+                score: 185,
+              }),
+            ]
+          : [],
+      });
+    },
+  );
+
+  it.each([
+    { kind: "artifact", fileKind: undefined },
+    { kind: "artifact", fileKind: "package-json" },
+    { kind: "artifact", fileKind: "html" },
+    { kind: "artifact", fileKind: "native-addon" },
+    { kind: "artifact", fileKind: "unknown" },
+    { kind: "artifact", fileKind: 1 },
+    { kind: "package", fileKind: "json" },
+    { kind: "native-addon", fileKind: "json" },
+    { kind: "source-map", fileKind: "json" },
+  ] as const)(
+    "does not infer a source file from $kind/$fileKind",
+    ({ kind, fileKind }) => {
+      const node = createJavaScriptApplicationNode({
+        kind,
+        identity: {
+          strategy: "content-digest",
+          stability: "global-exact",
+          sha256: HASH.unchanged,
+        },
+        observations: [
+          {
+            label: "src/data.json",
+            properties: {
+              path: "src/data.json",
+              ...(fileKind === undefined ? {} : { file_kind: fileKind }),
+            },
+            evidence: artifactEvidence(HASH.unchanged, "src/data.json"),
+          },
+        ],
+      });
+      const result = comparePathToNodes("src/data.json", [node]);
+      expect(item(result, "src/data.json")).toMatchObject({
+        status: "removed",
+        current_node_ids: [],
+        candidates: [],
+      });
+      expect(result.unmapped_current_node_ids).toEqual([]);
+    },
+  );
+});
+
 describe("historical source to bundle comparison", () => {
   it("classifies exact, changed, absent, split, and merged mappings stably", () => {
     const reference = historicalGraph("complete");
@@ -499,9 +605,10 @@ const sourceMapNode = (
 const comparePathToNodes = (
   sourcePath: string,
   nodes: readonly ApplicationNode[],
+  inventory: "complete" | "partial" = "complete",
 ) =>
   compareSourceToBundle({
-    reference: historicalGraph("complete", [sourcePath]),
+    reference: historicalGraph(inventory, [sourcePath]),
     application: {
       evidenceId: EVIDENCE_ID,
       rootArtifactSha256: HASH.artifact,

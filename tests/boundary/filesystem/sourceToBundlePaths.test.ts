@@ -13,6 +13,67 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
+it("retains an independent inventoried JSON source alongside JavaScript", async () => {
+  const root = await createTestTempDirectory("rea-json-source-match-");
+  const previous = join(root, "previous");
+  const current = join(root, "current");
+  await Promise.all([
+    mkdir(join(previous, "src"), { recursive: true }),
+    mkdir(join(current, "src"), { recursive: true }),
+  ]);
+  for (const directory of [previous, current]) {
+    await Promise.all([
+      writeFile(
+        join(directory, "src", "data.json"),
+        '{"label":"retained-independent"}\n',
+      ),
+      writeFile(join(directory, "src", "main.js"), "module.exports = 7;\n"),
+      writeFile(
+        join(directory, "package.json"),
+        '{"name":"json-retention","main":"src/main.js"}\n',
+      ),
+    ]);
+  }
+  const { reference, comparison, application } = await compareTrees(
+    previous,
+    current,
+  );
+  const file = reference.entries.find(({ path }) => path === "src/data.json");
+  expect(file).toMatchObject({
+    kind: "file",
+    language: "JSON",
+    classifications: ["config", "source"],
+  });
+  const currentFile = application.graph.nodes.find(
+    ({ kind, observations }) =>
+      kind === "artifact" &&
+      observations.some(
+        ({ properties }) =>
+          properties.path === "src/data.json" &&
+          properties.file_kind === "json",
+      ),
+  );
+  expect(currentFile?.identity).toMatchObject({
+    strategy: "content-digest",
+    sha256: file?.kind === "file" ? file.sha256 : null,
+  });
+  expect(comparison.items).toContainEqual(
+    expect.objectContaining({
+      source_path: "src/data.json",
+      status: "unchanged",
+      confidence: "exact",
+      current_node_ids: [currentFile?.node_id],
+    }),
+  );
+  expect(comparison.items).toContainEqual(
+    expect.objectContaining({
+      source_path: "src/main.js",
+      status: "unchanged",
+      confidence: "exact",
+    }),
+  );
+});
+
 it("keeps literal hash characters in historical/current filesystem paths", async () => {
   const root = await createTestTempDirectory("rea-source-path-");
   const previous = join(root, "previous");

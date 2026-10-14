@@ -72,10 +72,17 @@ export const sourceBearingNodes = (
   nodes: readonly ApplicationNode[],
 ): ApplicationNode[] =>
   nodes
-    .filter(({ kind }) => RELEVANT_NODE_KINDS.has(kind))
+    .filter(isSourceBearingNode)
     .sort((left, right) =>
       compareUnicodeCodePoints(left.node_id, right.node_id),
     );
+
+const isSourceBearingNode = (node: ApplicationNode): boolean =>
+  RELEVANT_NODE_KINDS.has(node.kind) ||
+  (node.kind === "artifact" &&
+    node.observations.some(
+      ({ properties }) => properties.file_kind === "json",
+    ));
 
 /** Keep historical source files in stable path order. */
 export const historicalSourceFiles = (
