@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { lstat, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, open, rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import {
   classifyAndHashRoot,
@@ -11,6 +12,69 @@ import {
 } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
+import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
+
+it.each([1, 7])(
+  "classifies a long ASAR JSON prefix with controlled %i-byte descriptor reads",
+  async (maximumRead) => {
+    const root = await createTestTempDirectory("rea-asar-short-root-read-");
+    const path = join(root, "input.asar");
+    const bytes = asarHeaderBytes(" ".repeat(9000) + '{"files":{}}');
+    await writeFile(path, bytes);
+    const prototypeHandle = await open(path, "r");
+    type BufferRead = (
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number | bigint | null,
+    ) => Promise<{ bytesRead: number; buffer: Buffer }>;
+    const prototype = Object.getPrototypeOf(prototypeHandle) as {
+      read: BufferRead;
+    };
+    await prototypeHandle.close();
+    const nativeRead = prototype.read;
+    const buffers = new Set<Buffer>();
+    let firstRead = true;
+    let classification = true;
+    const read = vi.spyOn(prototype, "read").mockImplementation(function (
+      this: typeof prototypeHandle,
+      buffer,
+      offset,
+      length,
+      position,
+    ) {
+      // Hashing uses independent bigint offsets. Keep those reads native;
+      // this injection examines only the admitted descriptor prefix owner.
+      if (typeof position !== "number") classification = false;
+      else if (position === 0) {
+        if (!firstRead) classification = false;
+        firstRead = false;
+      }
+      if (!classification)
+        return nativeRead.call(this, buffer, offset, length, position);
+      buffers.add(buffer);
+      return nativeRead.call(
+        this,
+        buffer,
+        offset,
+        Math.min(length, maximumRead),
+        position,
+      );
+    });
+    try {
+      const result = await classifyAndHashRoot(path, false, await lstat(path));
+      expect(result.format).toBe("asar");
+      expect(result.digest?.sha256).toBe(
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      // Short reads must reuse bounded storage rather than pin one backing per read.
+      expect(buffers.size).toBeLessThanOrEqual(2);
+      expect(read).toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "rejects a FIFO artifact root without waiting for a writer",

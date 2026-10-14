@@ -4,9 +4,10 @@ import type { Readable } from "node:stream";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 import {
-  createXmlPlistSignatureProbe,
-  MAX_XML_PLIST_PROBE_BYTES,
-} from "../domain/apple/appleArchiveFormat.js";
+  createArtifactClassificationProbe,
+  ARTIFACT_CLASSIFICATION_PREFIX_BYTES,
+} from "./ArtifactClassificationProbe.js";
+export { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "./ArtifactClassificationProbe.js";
 
 /** Full stream digest and byte count with bounded classification evidence. */
 export type HashResult = {
@@ -14,9 +15,6 @@ export type HashResult = {
   readonly bytes: number;
   readonly prefix: Buffer;
 };
-
-/** Bounded classification evidence; this is not an executable format size limit. */
-export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
 
 /** Preserve the inventory cancellation reason at a stream boundary. */
 export const abortIfNeeded = (signal?: AbortSignal): void => {
@@ -33,9 +31,7 @@ export const hashReadable = async (
   signal?: AbortSignal,
 ): Promise<HashResult> => {
   const hash = createHash("sha256");
-  const prefixes: Buffer[] = [];
-  let prefixBytes = 0;
-  const xmlProbe = createXmlPlistSignatureProbe();
+  const probe = createArtifactClassificationProbe();
   let bytes = 0;
   for await (const raw of stream) {
     abortIfNeeded(signal);
@@ -43,25 +39,18 @@ export const hashReadable = async (
     bytes += chunk.length;
     hash.update(chunk);
     let chunkOffset = 0;
-    while (
-      chunkOffset < chunk.length &&
-      (prefixBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES ||
-        (xmlProbe.state === "pending" &&
-          prefixBytes < MAX_XML_PLIST_PROBE_BYTES))
-    ) {
+    while (chunkOffset < chunk.length && probe.length < probe.limit) {
       const limit =
-        prefixBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES
+        probe.length < ARTIFACT_CLASSIFICATION_PREFIX_BYTES
           ? ARTIFACT_CLASSIFICATION_PREFIX_BYTES
-          : MAX_XML_PLIST_PROBE_BYTES;
+          : probe.limit;
       const selected = chunk.subarray(
         chunkOffset,
-        Math.min(chunkOffset + limit - prefixBytes, chunk.length),
+        Math.min(chunkOffset + limit - probe.length, chunk.length),
       );
-      prefixes.push(selected);
-      prefixBytes += selected.length;
       chunkOffset += selected.length;
-      xmlProbe.write(selected);
+      probe.write(selected);
     }
   }
-  return { sha256: hash.digest("hex"), bytes, prefix: Buffer.concat(prefixes) };
+  return { sha256: hash.digest("hex"), bytes, prefix: probe.prefix };
 };

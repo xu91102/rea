@@ -1,4 +1,5 @@
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import { hasAsarHeader } from "../AsarHeader.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import {
@@ -491,21 +492,6 @@ export const classifyArtifactContent = (
   )
     return { kind: "container", format: "asar" };
   return artifactRoleForFormat(path, format);
-};
-
-/**
- * Electron ASAR starts with a size pickle whose payload is one uint32, then
- * a header pickle whose payload begins with a JSON object.
- */
-export const hasAsarHeader = (prefix: Buffer): boolean => {
-  if (prefix.length < 17 || prefix.readUInt32LE(0) !== 4) return false;
-  const headerSize = prefix.readUInt32LE(4);
-  const payloadSize = prefix.readUInt32LE(8);
-  if (headerSize < 16 || payloadSize !== headerSize - 4) return false;
-  const stringLength = prefix.readUInt32LE(12);
-  return (
-    stringLength >= 2 && stringLength <= payloadSize - 4 && prefix[16] === 0x7b
-  );
 };
 
 const artifactRoleForFormat = (

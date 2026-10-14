@@ -18,6 +18,10 @@ import {
   writeOrderedZip,
 } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  prefixAsarHeaderJson,
+  asarHeaderBytes,
+} from "../../fixtures/asarHeader.js";
 
 const mainBytes = "module.exports = 'packed member';\n";
 const createNestedAsar = async () => {
@@ -49,54 +53,68 @@ const expectedNestedParents = {
 };
 
 describe("expanded ASAR inventory containment", () => {
-  it("parents expanded members to their archive without changing byte identities", async () => {
-    const { application, archive } = await createNestedAsar();
-    const nested = await inventoryArtifact(application);
-    const direct = await inventoryArtifact(archive);
-    expect(artifactParentPaths(nested)).toEqual(expectedNestedParents);
-    const container = artifactOccurrenceAt(nested, "resources/app.asar");
-    expect(container).toMatchObject({
-      entry_kind: "file",
-      artifact_kind: "container",
-      artifact_format: "asar",
-    });
-    expect(container.artifact_id).toBe(direct.manifest.root_artifact_id);
-    expect(
-      nested.nodes.find((node) => node.artifact_id === container.artifact_id),
-    ).toMatchObject({
-      format: "file",
-      content_state: "embedded",
-      sha256: createHash("sha256")
-        .update(await readFile(archive))
-        .digest("hex"),
-    });
-    for (const [path, parent] of Object.entries(expectedNestedParents)) {
-      if (parent === null) continue;
-      const child = artifactOccurrenceAt(nested, path);
-      expect(nested.edges).toContainEqual(
-        expect.objectContaining({
-          occurrence_id: child.occurrence_id,
-          relation: "contains",
-          parent_artifact_id: artifactOccurrenceAt(nested, parent).artifact_id,
-        }),
-      );
-      if (path.startsWith("resources/app.asar/"))
-        expect(child.artifact_id).toBe(
-          artifactOccurrenceAt(direct, path.slice("resources/app.asar/".length))
-            .artifact_id,
+  it.each(
+    ["", " ", "\t", "\r", "\n", " \t\r\n", " ".repeat(8192)].map((prefix) => ({
+      name: prefix.length > 4 ? "long whitespace" : JSON.stringify(prefix),
+      prefix,
+    })),
+  )(
+    "parents expanded members with $name header prefix without changing byte identities",
+    async ({ prefix }) => {
+      const { application, archive } = await createNestedAsar();
+      const bytes = prefixAsarHeaderJson(await readFile(archive), prefix);
+      await writeFile(archive, bytes);
+      const nested = await inventoryArtifact(application);
+      const direct = await inventoryArtifact(archive);
+      expect(artifactParentPaths(nested)).toEqual(expectedNestedParents);
+      const container = artifactOccurrenceAt(nested, "resources/app.asar");
+      expect(container).toMatchObject({
+        entry_kind: "file",
+        artifact_kind: "container",
+        artifact_format: "asar",
+      });
+      expect(container.artifact_id).toBe(direct.manifest.root_artifact_id);
+      expect(
+        nested.nodes.find((node) => node.artifact_id === container.artifact_id),
+      ).toMatchObject({
+        format: "file",
+        content_state: "embedded",
+        sha256: createHash("sha256")
+          .update(await readFile(archive))
+          .digest("hex"),
+      });
+      for (const [path, parent] of Object.entries(expectedNestedParents)) {
+        if (parent === null) continue;
+        const child = artifactOccurrenceAt(nested, path);
+        expect(nested.edges).toContainEqual(
+          expect.objectContaining({
+            occurrence_id: child.occurrence_id,
+            relation: "contains",
+            parent_artifact_id: artifactOccurrenceAt(nested, parent)
+              .artifact_id,
+          }),
         );
-    }
-    expect(artifactParentPaths(direct)).toEqual({
-      ".": null,
-      "assets.asar": ".",
-      "assets.asar/data.txt": "assets.asar",
-      lib: ".",
-      "lib/dep.js": "lib",
-      "main.js": ".",
-      "ordinary.asar": ".",
-    });
-    expect(await inventoryArtifact(application)).toEqual(nested);
-  });
+        if (path.startsWith("resources/app.asar/"))
+          expect(child.artifact_id).toBe(
+            artifactOccurrenceAt(
+              direct,
+              path.slice("resources/app.asar/".length),
+            ).artifact_id,
+          );
+      }
+      expect(artifactParentPaths(direct)).toEqual({
+        ".": null,
+        "assets.asar": ".",
+        "assets.asar/data.txt": "assets.asar",
+        lib: ".",
+        "lib/dep.js": "lib",
+        "main.js": ".",
+        "ordinary.asar": ".",
+      });
+      expect(await inventoryArtifact(application)).toEqual(nested);
+      expect(await readFile(archive)).toEqual(bytes);
+    },
+  );
 
   it("records the actual expanded archive as the integrity contradiction parent", async () => {
     const { application, archive } = await createNestedAsar();
@@ -127,6 +145,31 @@ describe("expanded ASAR inventory containment", () => {
 });
 
 describe("unexpanded ASAR inventory controls", () => {
+  it.each(["\v", "\f", "\u00a0", "\ufeff"])(
+    "does not admit non-JSON whitespace %j as an ASAR signature",
+    async (prefix) => {
+      const { archive } = await createNestedAsar();
+      const bytes = prefixAsarHeaderJson(await readFile(archive), prefix);
+      await writeFile(archive, bytes);
+      const observed = await inventoryArtifact(archive);
+      expect(observed.manifest.root_format).toBe("file");
+      expect(artifactParentPaths(observed)).toEqual({ ".": null });
+      expect(await readFile(archive)).toEqual(bytes);
+    },
+  );
+
+  it("does not infer an ASAR signature from padding or body bytes beyond its declared JSON", async () => {
+    const root = await createTestTempDirectory("rea-asar-json-extent-");
+    const archive = join(root, "ordinary.asar");
+    await writeFile(
+      archive,
+      Buffer.concat([asarHeaderBytes("  "), Buffer.from('{"files":{}}')]),
+    );
+    const observed = await inventoryArtifact(archive);
+    expect(observed.manifest.root_format).toBe("file");
+    expect(artifactParentPaths(observed)).toEqual({ ".": null });
+  });
+
   it("does not expand ZIP members from ASAR bytes or filenames", async () => {
     const { root, archive } = await createNestedAsar();
     const path = join(root, "opaque.zip");

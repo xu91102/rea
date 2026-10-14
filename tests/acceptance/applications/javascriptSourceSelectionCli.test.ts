@@ -1,6 +1,6 @@
 import { createPackageWithOptions } from "@electron/asar";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
@@ -9,14 +9,20 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { writeJavaScriptSourceSelectionFixture } from "../../fixtures/javascriptSourceSelection.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import { prefixAsarHeaderJson } from "../../fixtures/asarHeader.js";
 
 cliTest.for([
-  { format: "directory", command: "analyze" },
-  { format: "asar", command: "analyze-javascript-application" },
+  { format: "directory", command: "analyze", prefix: "", name: "directory" },
+  ...["", " \t\r\n", " ".repeat(8192)].map((prefix, index) => ({
+    format: "asar",
+    command: "analyze-javascript-application",
+    prefix,
+    name: ["compact ASAR", "whitespace ASAR", "long whitespace ASAR"][index],
+  })),
 ])(
-  "analyzes selected $format sources through $command with complete artifact identity",
+  "analyzes selected $name sources through $command with complete artifact identity",
   { timeout: 60_000 },
-  async ({ format, command }, { cli }) => {
+  async ({ format, command, prefix }, { cli }) => {
     const directory = await createTestTempDirectory("rea-js-source-selection-");
     const files = await writeJavaScriptSourceSelectionFixture(directory);
     let input = directory;
@@ -26,6 +32,10 @@ cliTest.for([
         "app.asar",
       );
       await createPackageWithOptions(directory, input, {});
+      await writeFile(
+        input,
+        prefixAsarHeaderJson(await readFile(input), prefix),
+      );
     }
     const requested = ["main.mjs", "package.json", "main.mjs"];
     const response = await cli.run({

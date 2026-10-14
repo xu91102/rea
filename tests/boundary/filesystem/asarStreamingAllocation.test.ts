@@ -22,6 +22,8 @@ import {
 } from "../../../src/artifacts/AsarEntryStream.js";
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
+import { hasAsarHeader } from "../../../src/artifacts/AsarHeader.js";
 
 const memberBytes = 64 * 1024 * 1024;
 const maximumObservedChunkBytes = 1024 * 1024;
@@ -93,6 +95,29 @@ const expectRetainedHandleRecovery = async (
 };
 
 describe("ASAR entry streaming", () => {
+  it.each([1, 7, 8192])(
+    "retains a long whitespace signature across %i-byte stream chunks without changing its digest",
+    async (chunkBytes) => {
+      const bytes = Buffer.concat([
+        asarHeaderBytes(" ".repeat(8176) + '{"files":{}}'),
+        Buffer.alloc(16384),
+      ]);
+      const chunks: Buffer[] = [];
+      for (let offset = 0; offset < bytes.length; offset += chunkBytes)
+        chunks.push(bytes.subarray(offset, offset + chunkBytes));
+      const digest = await hashReadable(Readable.from(chunks));
+      expect(digest.sha256).toBe(
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      expect(digest.bytes).toBe(bytes.length);
+      expect(hasAsarHeader(digest.prefix)).toBe(true);
+      expect(digest.prefix.length).toBeGreaterThan(8192);
+      expect(digest.prefix.length).toBeLessThanOrEqual(
+        16 + bytes.readUInt32LE(12),
+      );
+    },
+  );
+
   it.skipIf(process.platform === "win32")(
     "closes a packed member handle when its unopened output stream is destroyed",
     async () => {

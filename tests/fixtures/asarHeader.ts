@@ -11,6 +11,16 @@ export const asarHeaderBytes = (json: string): Buffer => {
   return bytes;
 };
 
+/** Prepend serialized header text while preserving every original member byte. */
+export const prefixAsarHeaderJson = (archive: Buffer, prefix: string): Buffer =>
+  Buffer.concat([
+    asarHeaderBytes(
+      prefix +
+        archive.subarray(16, 16 + archive.readUInt32LE(12)).toString("utf8"),
+    ),
+    archive.subarray(8 + archive.readUInt32LE(4)),
+  ]);
+
 /** Nested metadata without a recursive fixture builder or real directories. */
 export const nestedAsarHeader = (
   depth: number,
