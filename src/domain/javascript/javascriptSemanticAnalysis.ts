@@ -63,7 +63,6 @@ import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
 import { semanticResourceLimitsIn } from "./javascriptSemanticResourceLimits.js";
 import {
-  hasCommonJsWrapperContext,
   parseJavaScriptSource,
   type ParsedJavaScriptSource,
 } from "./javascriptSourceParser.js";
@@ -79,8 +78,8 @@ interface BindPatternInput {
   readonly scope: JavaScriptSemanticScopeState;
   readonly state: JavaScriptSemanticAnalysisState;
   readonly mutable: boolean;
+  readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
   readonly kind?: JavaScriptSemanticDefinition["kind"];
-  readonly variableKind?: t.VariableDeclaration["kind"];
   readonly projection?: readonly (string | number | null)[];
   readonly referenceOnly?: boolean;
   readonly copyKind?: "object-rest" | "array-rest";
@@ -102,8 +101,8 @@ interface AddBindingInput {
   readonly scope: JavaScriptSemanticScopeState;
   readonly name: string;
   readonly kind: JavaScriptSemanticDefinition["kind"];
-  readonly variableKind?: t.VariableDeclaration["kind"];
   readonly mutable: boolean;
+  readonly declarationKind?: "var" | "let" | "const" | "using" | "await using";
   readonly definitionNode: t.Node;
   readonly initializer: t.Node | null;
   readonly directOrigin?: JavaScriptModuleOrigin;
@@ -683,7 +682,6 @@ const createState = (
     scopesById: new Map([[root.scopeId, root]]),
     scopeByNode: new WeakMap([[program, root]]),
     bindingsById: new Map(),
-    commonJsWrapperBindings: new Set(),
     callables: [],
     callableNodesById: new Map(),
     moduleLinks: [],
@@ -976,13 +974,13 @@ const bindInnerDeclaration = (
       initializer: node.init ?? null,
       scope: semanticVariableScope(scope, parent, state),
       state,
-      ...(parent !== null && t.isVariableDeclaration(parent)
-        ? { variableKind: parent.kind }
-        : {}),
       mutable:
         parent !== null && t.isVariableDeclaration(parent)
           ? parent.kind !== "const"
           : true,
+      ...(parent !== null && t.isVariableDeclaration(parent)
+        ? { declarationKind: parent.kind }
+        : {}),
     });
   else if (t.isClassExpression(node) && t.isIdentifier(node.id))
     addBinding({
@@ -1265,8 +1263,8 @@ const bindPattern = (input: BindPatternInput): void => {
     scope,
     state,
     mutable,
+    declarationKind,
     kind = "variable",
-    variableKind,
     projection = [],
     referenceOnly = false,
     copyKind,
@@ -1307,8 +1305,8 @@ const bindPattern = (input: BindPatternInput): void => {
       scope,
       name: pattern.name,
       kind,
-      ...(variableKind === undefined ? {} : { variableKind }),
       mutable,
+      ...(declarationKind === undefined ? {} : { declarationKind }),
       definitionNode: pattern,
       initializer,
       projection,
@@ -1411,6 +1409,7 @@ const addBinding = (input: AddBindingInput): void => {
     name,
     kind,
     mutable,
+    declarationKind,
     definitionNode,
     initializer,
     directOrigin,
@@ -1425,16 +1424,8 @@ const addBinding = (input: AddBindingInput): void => {
     state.bindingsById.set(binding.bindingId, binding);
   }
   binding.mutable ||= mutable;
-  const wrapperParameter =
-    hasCommonJsWrapperContext(state.program) &&
-    scope.kind === "program" &&
-    kind === "variable" &&
-    input.variableKind === "var" &&
-    ["require", "module", "exports", "__filename", "__dirname"].includes(name);
-  if (wrapperParameter && binding.definitions.length === 0)
-    state.commonJsWrapperBindings.add(binding.bindingId);
-  else if (!wrapperParameter)
-    state.commonJsWrapperBindings.delete(binding.bindingId);
+  if (declarationKind !== undefined)
+    binding.declarationKinds.add(declarationKind);
   binding.definitions.push({ kind, location: range(definitionNode) });
   if (initializer !== null)
     binding.initializers.push({ node: initializer, projection });
@@ -1462,6 +1453,7 @@ const createBinding = (
   name,
   kind,
   mutable,
+  declarationKinds: new Set(),
   memberWrites: [],
   escapedPaths: [],
   definitions: [],

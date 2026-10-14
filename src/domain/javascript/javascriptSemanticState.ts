@@ -13,6 +13,7 @@ import type {
   JavaScriptSemanticScope,
 } from "./javascriptSemanticIr.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
+import { hasCommonJsWrapperContext } from "./javascriptSourceParser.js";
 
 /** Internal initializer plus a destructuring/member projection. */
 interface JavaScriptSemanticInitializer {
@@ -49,6 +50,8 @@ export interface JavaScriptSemanticBindingState {
   readonly scopeId: string;
   readonly name: string;
   kind: JavaScriptSemanticDefinition["kind"];
+  /** Source declaration form retained internally for CommonJS wrapper bindings. */
+  declarationKinds: Set<"var" | "let" | "const" | "using" | "await using">;
   mutable: boolean;
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
@@ -81,8 +84,6 @@ export interface JavaScriptSemanticAnalysisState {
   /** Scope boundaries and descendant scopes resolved on demand. */
   readonly scopeByNode: WeakMap<t.Node, JavaScriptSemanticScopeState>;
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
-  /** Program var declarations of Node's implicit wrapper parameters, before writes. */
-  readonly commonJsWrapperBindings: Set<string>;
   /** Effects on a cached require exports object, independent of local projections. */
   readonly requiredModuleEffects: Map<
     string,
@@ -254,7 +255,18 @@ export const isCommonJsWrapperBinding = (
   binding: JavaScriptSemanticBindingState | undefined,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  binding !== undefined && state.commonJsWrapperBindings.has(binding.bindingId);
+  binding !== undefined &&
+  hasCommonJsWrapperContext(state.program) &&
+  state.scopesById.get(binding.scopeId)?.kind === "program" &&
+  ["require", "module", "exports", "__filename", "__dirname"].includes(
+    binding.name,
+  ) &&
+  binding.declarationKinds.size === 1 &&
+  binding.declarationKinds.has("var") &&
+  // Later writes replace the current value, not its initial wrapper identity.
+  binding.definitions.every(
+    ({ kind }) => kind === "variable" || kind === "assignment",
+  );
 
 /** Identify a host name without a lexical replacement or unresolved environment. */
 export const isUnshadowedGlobal = (

@@ -61,81 +61,89 @@ const writeCommonJsControl = async (
   expect(JSON.parse(stdout), name).toBe(expected);
 };
 
+const commonJsWrapperSources = [
+  ["control.cjs", "", "exports.value = value;"],
+  ["require.cjs", "var require;", "exports.value = value;"],
+  ["exports.cjs", "var exports;", "exports.value = value;"],
+  ["module.cjs", "var module;", "module.exports.value = value;"],
+  ["combined.cjs", "var module, exports, require;", "exports.value = value;"],
+  [
+    "function-module.cjs",
+    "var module, require; function module() {} module.require = () => 99;",
+    "exports.value = value;",
+  ],
+  [
+    "fresh.cjs",
+    "var module, require; module = {}; module.require = () => 99;",
+    "exports.value = value;",
+  ],
+  [
+    "unrelated.cjs",
+    "var module, require; Object.assign(module, { unrelated: 1 });",
+    "exports.value = value;",
+  ],
+  [
+    "global-property.cjs",
+    "var module, require; globalThis.module = { require: () => 99 };",
+    "exports.value = value;",
+  ],
+] as const;
+
+const commonJsShadowSources = [
+  [
+    "reassigned.cjs",
+    `var module, exports, require; module = { exports: {} };
+       exports = {}; require = () => 99;
+       exports.value = require('./dep.cjs'); module.exports.value = 99;`,
+  ],
+  [
+    "nested.cjs",
+    `function local() { var module, exports, require;
+       module = { exports: {} }; exports = {}; require = () => 99;
+       exports.value = require('./dep.cjs'); module.exports.value = 99; }
+       local();`,
+  ],
+  [
+    "local.mjs",
+    `var module = { exports: {} }, exports = {}, require = () => 99;
+       exports.value = require('./dep.cjs'); module.exports.value = 99;`,
+  ],
+] as const;
+
+const commonJsDelegateSources = [
+  ["delegated.cjs", "module.require = () => 99; module = {};"],
+  ["loop.cjs", "for (module.require of [() => 99]) {}"],
+  ["destructured.cjs", "[module.require] = [() => 99];"],
+  ["conditional.cjs", "if (false) module = {}; module.require = () => 99;"],
+  [
+    "alias-history.cjs",
+    "let saved = module; saved.require = () => 99; saved = {};",
+  ],
+  [
+    "computed-key.cjs",
+    "const key = 'require'; Object.assign(module, { [key]: () => 99 });",
+  ],
+  [
+    "spread-property.cjs",
+    "Object.assign(module, { ...{ require: () => 99 } });",
+  ],
+  [
+    "opaque-arguments.cjs",
+    "const args = [module, { require: () => 99 }]; Object.assign(...args);",
+  ],
+  [
+    "unknown-replacement.cjs",
+    "const saved = module; module = (() => saved)(); module.require = () => 99;",
+  ],
+  ["dynamic-scope.cjs", "with ({}) { module.require = () => 99; }"],
+] as const;
+
 it("preserves CommonJS wrapper defaults through uninitialized var redeclarations", async () => {
   const root = await createTestTempDirectory("rea-commonjs-wrapper-vars-");
   await writeFile(join(root, "dep.cjs"), "module.exports = 42;");
-  const sources = [
-    ["control.cjs", "", "exports.value = value;"],
-    ["require.cjs", "var require;", "exports.value = value;"],
-    ["exports.cjs", "var exports;", "exports.value = value;"],
-    ["module.cjs", "var module;", "module.exports.value = value;"],
-    ["combined.cjs", "var module, exports, require;", "exports.value = value;"],
-    [
-      "fresh.cjs",
-      "var module, require; module = {}; module.require = () => 99;",
-      "exports.value = value;",
-    ],
-    [
-      "unrelated.cjs",
-      "var module, require; Object.assign(module, { unrelated: 1 });",
-      "exports.value = value;",
-    ],
-    [
-      "global-property.cjs",
-      "var module, require; globalThis.module = { require: () => 99 };",
-      "exports.value = value;",
-    ],
-  ] as const;
-  const negativeSources = [
-    [
-      "reassigned.cjs",
-      `var module, exports, require; module = { exports: {} };
-         exports = {}; require = () => 99;
-         exports.value = require('./dep.cjs'); module.exports.value = 99;`,
-    ],
-    [
-      "nested.cjs",
-      `function local() { var module, exports, require;
-         module = { exports: {} }; exports = {}; require = () => 99;
-         exports.value = require('./dep.cjs'); module.exports.value = 99; }
-         local();`,
-    ],
-    [
-      "local.mjs",
-      `var module = { exports: {} }, exports = {}, require = () => 99;
-         exports.value = require('./dep.cjs'); module.exports.value = 99;`,
-    ],
-  ] as const;
-  for (const [name, source] of negativeSources)
+  for (const [name, source] of commonJsShadowSources)
     await writeFile(join(root, name), source);
-  const delegates = [
-    ["delegated.cjs", "module.require = () => 99; module = {};"],
-    ["loop.cjs", "for (module.require of [() => 99]) {}"],
-    ["destructured.cjs", "[module.require] = [() => 99];"],
-    ["conditional.cjs", "if (false) module = {}; module.require = () => 99;"],
-    [
-      "alias-history.cjs",
-      "let saved = module; saved.require = () => 99; saved = {};",
-    ],
-    [
-      "computed-key.cjs",
-      "const key = 'require'; Object.assign(module, { [key]: () => 99 });",
-    ],
-    [
-      "spread-property.cjs",
-      "Object.assign(module, { ...{ require: () => 99 } });",
-    ],
-    [
-      "opaque-arguments.cjs",
-      "const args = [module, { require: () => 99 }]; Object.assign(...args);",
-    ],
-    [
-      "unknown-replacement.cjs",
-      "const saved = module; module = (() => saved)(); module.require = () => 99;",
-    ],
-    ["dynamic-scope.cjs", "with ({}) { module.require = () => 99; }"],
-  ] as const;
-  for (const [name, write] of delegates)
+  for (const [name, write] of commonJsDelegateSources)
     await writeCommonJsControl(
       root,
       name,
@@ -143,7 +151,7 @@ it("preserves CommonJS wrapper defaults through uninitialized var redeclarations
        const value = require('./dep.cjs'); exports.value = value;`,
       99,
     );
-  for (const [name, declaration, exportValue] of sources)
+  for (const [name, declaration, exportValue] of commonJsWrapperSources)
     await writeCommonJsControl(
       root,
       name,
@@ -156,7 +164,7 @@ it("preserves CommonJS wrapper defaults through uninitialized var redeclarations
     await runCli(["analyze-javascript-application", root, "--json"]),
   );
   expect(cli.normalized_result).toEqual(mcp.normalized_result);
-  for (const [name] of sources) {
+  for (const [name] of commonJsWrapperSources) {
     const edges = mcp.normalized_result.graph.edges.filter(
       ({ evidence }) =>
         evidence.location.available &&
@@ -186,7 +194,7 @@ it("preserves CommonJS wrapper defaults through uninitialized var redeclarations
       ]),
     );
   }
-  for (const [name] of negativeSources) {
+  for (const [name] of commonJsShadowSources) {
     const edges = mcp.normalized_result.graph.edges.filter(
       ({ evidence, properties }) =>
         evidence.location.available &&
@@ -204,7 +212,7 @@ it("preserves CommonJS wrapper defaults through uninitialized var redeclarations
         return false;
       const source = location.value.source;
       return (
-        delegates.some(([name]) => source === name) &&
+        commonJsDelegateSources.some(([name]) => source === name) &&
         properties.module_link_kind === "require"
       );
     }),
