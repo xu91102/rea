@@ -105,7 +105,9 @@ first member in ZIP directory order, not its numeric ID or capture time.
 
 HTTP fields and ordered duplicate headers are retained, with stored body bytes
 in binary sidecars. Bodies are not dechunked or decompressed. Metadata is an
-XML node tree; optional `_w.txt` and `_g.txt` files retain opaque WebSocket and
+XML node tree. Metadata accepts UTF-8 or BOM-marked UTF-16; any XML encoding
+declaration must agree with those bytes. Other declared encodings are refused.
+Optional `_w.txt` and `_g.txt` files retain opaque WebSocket and
 gRPC message bytes. Missing members remain null, distinct from empty bodies.
 See Telerik's [SAZ format reference](https://www.telerik.com/fiddler/fiddler-everywhere/documentation/knowledge-base/fiddler-archives).
 

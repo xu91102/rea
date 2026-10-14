@@ -430,6 +430,9 @@ it("retains folded headers, stored chunk framing and BOM-marked UTF-16 metadata"
 it.each([
   "bad-http",
   "bad-xml",
+  "bad-xml-utf8-declaration",
+  "bad-xml-utf16-declaration",
+  "unsupported-xml-encoding",
   "dtd",
   "unknown-member",
   "encrypted",
@@ -442,6 +445,26 @@ it.each([
     entries.push(["raw/8_c.txt", Buffer.from("malformed-private-input")]);
   if (variant === "bad-xml")
     entries.push(["raw/8_m.xml", Buffer.from("<Session><Broken></Session>")]);
+  if (variant === "bad-xml-utf8-declaration")
+    entries.push([
+      "raw/8_m.xml",
+      Buffer.from('<?xml version="1.0" encoding="UTF-16"?><Session/>'),
+    ]);
+  if (variant === "bad-xml-utf16-declaration")
+    entries.push([
+      "raw/8_m.xml",
+      Buffer.from(
+        '\ufeff<?xml version="1.0" encoding="UTF-8"?><Session/>',
+        "utf16le",
+      ),
+    ]);
+  if (variant === "unsupported-xml-encoding")
+    entries.push([
+      "raw/8_m.xml",
+      Buffer.from(
+        '<?xml version="1.0" encoding="ISO-8859-1"?><Session><Note>café</Note></Session>',
+      ),
+    ]);
   if (variant === "dtd")
     entries.push([
       "raw/8_m.xml",
@@ -479,7 +502,9 @@ it.each([
   const result = await cliResponse(path, ["--record", "0"]);
   expect(result.ok, result.stdout).toBe(false);
   expect(JSON.parse(result.stdout).category).toBe(
-    ["encrypted", "unknown-member", "dtd"].includes(variant)
+    ["encrypted", "unknown-member", "dtd", "unsupported-xml-encoding"].includes(
+      variant,
+    )
       ? "unsupported_provider"
       : "invalid_input",
   );

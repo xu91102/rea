@@ -2,6 +2,58 @@ import { expect, it } from "vitest";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeSazMetadata } from "./SazMetadata.js";
 
+it.each([
+  Buffer.from(
+    '<?xml version="1.0" encoding="UTF-8"?><Session><Note>café</Note></Session>',
+  ),
+  Buffer.from(
+    '\ufeff<?xml version="1.0" encoding="utf-8"?><Session><Note>café</Note></Session>',
+  ),
+  Buffer.from(
+    '\ufeff<?xml version="1.0" encoding="UTF-16"?><Session><Note>café</Note></Session>',
+    "utf16le",
+  ),
+  Buffer.from(
+    '\ufeff<?xml version="1.0" encoding="UTF-16"?><Session><Note>café</Note></Session>',
+    "utf16le",
+  ).swap16(),
+  Buffer.from(
+    '\ufeff<?xml version="1.0" encoding="UTF-16LE"?><Session><Note>café</Note></Session>',
+    "utf16le",
+  ),
+  Buffer.from(
+    '\ufeff<?xml version="1.0" encoding="UTF-16BE"?><Session><Note>café</Note></Session>',
+    "utf16le",
+  ).swap16(),
+  Buffer.from(
+    '\ufeff<?xml version="1.0"?><Session><Note>café</Note></Session>',
+    "utf16le",
+  ),
+  Buffer.from(
+    '<Session><!-- encoding="UTF-16" --><Note><![CDATA[café]]></Note></Session>',
+  ),
+])(
+  "retains supported bytes with consistent or absent XML declarations: %#",
+  (bytes) => {
+    const before = Buffer.from(bytes);
+    expect(JSON.stringify(decodeSazMetadata(bytes))).toContain(
+      '"value":"café"',
+    );
+    expect(bytes).toEqual(before);
+  },
+);
+
+it("rejects a UTF-16 declaration with the wrong byte order", () => {
+  expect(() =>
+    decodeSazMetadata(
+      Buffer.from(
+        '\ufeff<?xml version="1.0" encoding="UTF-16BE"?><Session/>',
+        "utf16le",
+      ),
+    ),
+  ).toThrow(expect.objectContaining({ reason: "format" }));
+});
+
 it("retains U+FFFD in well-formed metadata as an ordinary XML character", () => {
   const decoded = JSON.stringify(
     decodeSazMetadata(

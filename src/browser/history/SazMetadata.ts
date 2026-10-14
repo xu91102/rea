@@ -6,14 +6,14 @@ import { CaptureFormatError } from "./CaptureFormatError.js";
 
 /** Preserve XML node order, attribute names and text without interpreting producer-specific flags. */
 export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
+  const encoding =
+    bytes[0] === 0xff && bytes[1] === 0xfe
+      ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? "utf-16be"
+        : "utf-8";
   let xml: string;
   try {
-    const encoding =
-      bytes[0] === 0xff && bytes[1] === 0xfe
-        ? "utf-16le"
-        : bytes[0] === 0xfe && bytes[1] === 0xff
-          ? "utf-16be"
-          : "utf-8";
     xml = new TextDecoder(encoding, { fatal: true }).decode(bytes);
   } catch {
     throw new CaptureFormatError(
@@ -21,7 +21,7 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
       "SAZ metadata must use UTF-8 or BOM-marked UTF-16.",
     );
   }
-  validateSazXml(xml);
+  validateSazXml(xml, encoding);
   let parseFailed = false;
   let document: ReturnType<DOMParser["parseFromString"]>;
   try {
@@ -86,12 +86,19 @@ export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
 };
 
 /** Validate well-formedness before the DOM parser projects retained evidence. */
-const validateSazXml = (xml: string): void => {
+const validateSazXml = (
+  xml: string,
+  encoding: "utf-8" | "utf-16le" | "utf-16be",
+): void => {
   const parser = new SaxesParser({
     defaultXMLVersion: "1.0",
     forceXMLVersion: true,
   });
   let hasDoctype = false;
+  let declaredEncoding: string | undefined;
+  parser.on("xmldecl", (declaration) => {
+    declaredEncoding = declaration.encoding?.toLowerCase();
+  });
   parser.on("doctype", () => {
     hasDoctype = true;
   });
@@ -112,5 +119,19 @@ const validateSazXml = (xml: string): void => {
     throw new CaptureFormatError(
       "unsupported",
       "SAZ metadata DTDs are unsupported.",
+    );
+  if (declaredEncoding === undefined) return;
+  if (!["utf-8", "utf-16", "utf-16le", "utf-16be"].includes(declaredEncoding))
+    throw new CaptureFormatError(
+      "unsupported",
+      "SAZ metadata must declare UTF-8 or BOM-marked UTF-16.",
+    );
+  if (
+    declaredEncoding !== encoding &&
+    !(declaredEncoding === "utf-16" && encoding !== "utf-8")
+  )
+    throw new CaptureFormatError(
+      "format",
+      "SAZ metadata encoding declaration does not match its bytes.",
     );
 };
