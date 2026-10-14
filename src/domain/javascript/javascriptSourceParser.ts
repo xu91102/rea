@@ -3,6 +3,23 @@ import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 /** Babel AST produced by REA's inert JavaScript parser boundary. */
 export type ParsedJavaScriptSource = ReturnType<typeof parse>;
 
+const commonJsWrapperPrograms = new WeakSet<
+  ParsedJavaScriptSource["program"]
+>();
+
+/** Filename-established wrapper context, separate from Babel's script syntax mode. */
+export const hasCommonJsWrapperContext = (
+  program: ParsedJavaScriptSource["program"],
+): boolean => commonJsWrapperPrograms.has(program);
+
+const retainCommonJsWrapperContext = (
+  file: ParsedJavaScriptSource,
+): ParsedJavaScriptSource => {
+  if (file.program.sourceType === "script")
+    commonJsWrapperPrograms.add(file.program);
+  return file;
+};
+
 /**
  * Babel plugins for one source path. Single owner for TypeScript/JSX
  * mode selection (tsc + Babel `typescript` plugin semantics).
@@ -77,12 +94,14 @@ export const parseRecoveredJavaScript = (
       delete normalizedOptions.allowReturnOutsideFunction;
       delete normalizedOptions.allowNewTargetOutsideFunction;
     }
+    const file = parse(source, {
+      ...normalizedOptions,
+      sourceType,
+      errorRecovery: true,
+    });
     return {
-      file: parse(source, {
-        ...normalizedOptions,
-        sourceType,
-        errorRecovery: true,
-      }),
+      file:
+        sourceType === "commonjs" ? retainCommonJsWrapperContext(file) : file,
       moduleOnlyErrors: [],
     };
   }
@@ -130,11 +149,11 @@ export const parseJavaScriptSource = (
     });
     // Unambiguous mode retains module-only diagnostics after choosing a script.
     // The .cjs extension establishes wrapper mode, so obtain its own diagnostics.
-    return commonjs &&
-      file.program.sourceType === "script" &&
-      file.errors.length > 0
-      ? parse(source, { ...options, sourceType: "commonjs" })
-      : file;
+    const recovered =
+      commonjs && file.program.sourceType === "script" && file.errors.length > 0
+        ? parse(source, { ...options, sourceType: "commonjs" })
+        : file;
+    return commonjs ? retainCommonJsWrapperContext(recovered) : recovered;
   } catch (cause: unknown) {
     // Unparseable source is represented by the null return.
     void cause;

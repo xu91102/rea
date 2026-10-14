@@ -53,6 +53,23 @@ export interface JavaScriptIntrinsicInvocation {
     | undefined;
 }
 
+const objectMutationKeys = (
+  arguments_: readonly t.CallExpression["arguments"][number][] | undefined,
+  method: string | undefined,
+): readonly (string | null)[] => {
+  if (arguments_ === undefined) return [null];
+  const sources = method === "assign" ? arguments_.slice(1) : [arguments_[1]];
+  const keys: (string | null)[] = [];
+  for (const source of sources) {
+    if (!t.isObjectExpression(source)) return [null];
+    for (const property of source.properties) {
+      if (t.isSpreadElement(property)) return [null];
+      keys.push(semanticStaticPropertyKey(property.key, property.computed));
+    }
+  }
+  return keys;
+};
+
 /**
  * Index writes through possible lexical object identities. Resolve the complete
  * object before appending the written key: self-reference properties can denote
@@ -126,11 +143,14 @@ export function* collectJavaScriptIdentityWritesSteps(
             if (t.isNode(target) && !t.isSpreadElement(target)) {
               const identities = origin(target, "member", node);
               if (identities.length > 0) {
-                const key = keyedMutators.has(method ?? "")
-                  ? [staticString(arguments_?.[1]) ?? null]
-                  : [];
+                const keys = keyedMutators.has(method ?? "")
+                  ? [[staticString(arguments_?.[1]) ?? null]]
+                  : owner === "Object" &&
+                      (method === "assign" || method === "defineProperties")
+                    ? objectMutationKeys(arguments_, method).map((key) => [key])
+                    : [[]];
                 for (const identity of identities)
-                  retain(node, [...identity, ...key]);
+                  for (const key of keys) retain(node, [...identity, ...key]);
               } else if (!freshObject(target)) {
                 for (const scope of origin(node, "opaque-call", node))
                   retain(node, scope);

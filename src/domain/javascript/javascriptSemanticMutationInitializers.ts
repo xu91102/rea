@@ -300,7 +300,7 @@ export const semanticMutationInitializers = (
 ): Pick<
   JavaScriptSemanticBindingState,
   "initializers" | "referenceInitializers" | "directOrigins"
-> => {
+> & { readonly replacesPriorValue?: true } => {
   const mutationPosition =
     directMutationPosition(mutation, parents) ??
     referenceInitializerPosition(mutation, parents);
@@ -350,6 +350,7 @@ export const semanticMutationInitializers = (
     // A proven earlier assignment replaces even an import-equals value. A
     // capture before or inside an uncertain assignment retains the full binding.
     directOrigins: origins.length === 0 ? binding.directOrigins : [],
+    ...(origins.length === 0 ? {} : { replacesPriorValue: true as const }),
     initializers: binding.initializers.filter((initializer) =>
       retained.has(initializer),
     ),

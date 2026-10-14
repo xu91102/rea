@@ -37,6 +37,9 @@ export interface JavaScriptSemanticMemberEffect {
   readonly node: t.Node | undefined;
 }
 
+/** Node's require closes over its original module, distinct from global.module. */
+export const COMMON_JS_MODULE_PATH = ["commonjs", "module"] as const;
+
 export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemanticMemberEffect {
   readonly kind: "write" | "escape";
 }
@@ -78,6 +81,8 @@ export interface JavaScriptSemanticAnalysisState {
   /** Scope boundaries and descendant scopes resolved on demand. */
   readonly scopeByNode: WeakMap<t.Node, JavaScriptSemanticScopeState>;
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
+  /** Program var declarations of Node's implicit wrapper parameters, before writes. */
+  readonly commonJsWrapperBindings: Set<string>;
   /** Effects on a cached require exports object, independent of local projections. */
   readonly requiredModuleEffects: Map<
     string,
@@ -244,12 +249,27 @@ export const semanticVariableScope = (
   return candidate;
 };
 
-/** Identify a global name only when no lexical or dynamic environment shadows it. */
+/** Retained initial wrapper identity; later assignments can replace its current value. */
+export const isCommonJsWrapperBinding = (
+  binding: JavaScriptSemanticBindingState | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  binding !== undefined && state.commonJsWrapperBindings.has(binding.bindingId);
+
+/** Identify a host name without a lexical replacement or unresolved environment. */
 export const isUnshadowedGlobal = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   name: string,
-): boolean =>
-  t.isIdentifier(node, { name }) &&
-  resolveSemanticBindingState(state, node, name) === undefined &&
-  !semanticResolutionBlocked(state, node, name);
+): boolean => {
+  if (!t.isIdentifier(node, { name })) return false;
+  const binding = resolveSemanticBindingState(state, node, name);
+  return (
+    !semanticResolutionBlocked(state, node, name) &&
+    (binding === undefined ||
+      (isCommonJsWrapperBinding(binding, state) &&
+        binding.initializers.length === 0 &&
+        binding.referenceInitializers.length === 0 &&
+        binding.definitions.every(({ kind }) => kind === "variable")))
+  );
+};

@@ -11,12 +11,16 @@ import {
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import {
   isUnshadowedGlobal,
+  isCommonJsWrapperBinding,
+  COMMON_JS_MODULE_PATH,
   resolveSemanticBindingState,
+  semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
+import { hasCommonJsWrapperContext } from "./javascriptSourceParser.js";
 
 const GLOBAL_OBJECT_NAMES = ["globalThis", "global", "window", "self"];
 
@@ -50,6 +54,7 @@ type AmbientProjection = AmbientPath | undefined;
 const createAmbientPathResolver = (
   state: JavaScriptSemanticAnalysisState,
   possibleWrites: boolean,
+  freshObject: (node: t.Node) => boolean,
 ) => {
   const cached = new WeakMap<t.Node, readonly AmbientPath[]>();
   return (node: t.Node, capture?: t.Node): readonly AmbientPath[] => {
@@ -123,23 +128,43 @@ const createAmbientPathResolver = (
         continue;
       }
       if (t.isIdentifier(root)) {
+        const binding = resolveSemanticBindingState(state, root, root.name);
+        const readAt = current.readsAtSelf ? root : capture;
+        const selected =
+          binding !== undefined && readAt !== undefined
+            ? semanticMutationInitializers(binding, readAt, state.parentsByNode)
+            : undefined;
+        const commonJsModule =
+          possibleWrites &&
+          root.name === "module" &&
+          (isUnshadowedGlobal(root, state, "module") ||
+            isCommonJsWrapperBinding(binding, state) ||
+            (hasCommonJsWrapperContext(state.program) &&
+              semanticResolutionBlocked(state, root, "module")));
+        // Earlier assignment proves readiness, not a disjoint object identity.
+        // Unknown RHS values can still denote Node's original wrapper module.
+        const distinctReplacement =
+          selected?.replacesPriorValue === true &&
+          selected.initializers.every(
+            ({ node, projection }) =>
+              projection.length === 0 && freshObject(node),
+          );
+        if (commonJsModule && !distinctReplacement)
+          retain([...COMMON_JS_MODULE_PATH, ...(suffix ?? [])]);
         if (globalObjectName(root, state) !== undefined) {
           retain(["global", ...(suffix ?? [])]);
           continue;
         }
-        if (isUnshadowedGlobal(root, state, root.name)) {
+        if (!commonJsModule && isUnshadowedGlobal(root, state, root.name)) {
           retain(["global", root.name, ...(suffix ?? [])]);
           continue;
         }
-        const binding = resolveSemanticBindingState(state, root, root.name);
         if (binding === undefined) continue;
         const stable = semanticStableInitializer(binding, state);
-        const readAt = current.readsAtSelf ? root : capture;
         const initializers = possibleWrites
           ? readAt === undefined
             ? binding.initializers
-            : semanticMutationInitializers(binding, readAt, state.parentsByNode)
-                .initializers
+            : (selected?.initializers ?? binding.initializers)
           : stable === undefined
             ? []
             : [stable];
@@ -250,8 +275,6 @@ export function* indexJavaScriptAmbientWritesSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void> {
-  const ambientReads = createAmbientPathResolver(state, false);
-  const ambientWrites = createAmbientPathResolver(state, true);
   const interop = createSemanticModuleInterop(state, {
     intrinsicPath: (node) => {
       const [path] = ambientReads(node);
@@ -260,10 +283,25 @@ export function* indexJavaScriptAmbientWritesSteps(
         : undefined;
     },
   });
+  const ambientReads = createAmbientPathResolver(
+    state,
+    false,
+    interop.isFreshObject,
+  );
+  const ambientWrites = createAmbientPathResolver(
+    state,
+    true,
+    interop.isFreshObject,
+  );
   yield* collectJavaScriptIdentityWritesSteps(
     program,
     (root, kind, writeSite) => {
-      if (kind === "opaque-call") return [];
+      // An unresolved target of a known mutator may be the wrapper module.
+      // Preserve this possible write without guessing argument identities.
+      if (kind === "opaque-call")
+        return hasCommonJsWrapperContext(state.program)
+          ? [COMMON_JS_MODULE_PATH]
+          : [];
       // Reassigning a local alias changes the binding, not the referenced object.
       if (kind === "binding")
         return t.isIdentifier(root) &&

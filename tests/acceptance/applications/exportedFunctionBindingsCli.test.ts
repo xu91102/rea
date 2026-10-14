@@ -46,6 +46,171 @@ afterAll(async () => {
   }
 });
 
+const writeCommonJsControl = async (
+  root: string,
+  name: string,
+  source: string,
+  expected: number,
+): Promise<void> => {
+  const path = join(root, name);
+  await writeFile(
+    path,
+    `${source}\nconsole.log(JSON.stringify(exports.value));`,
+  );
+  const { stdout } = await execute(process.execPath, [path]);
+  expect(JSON.parse(stdout), name).toBe(expected);
+};
+
+it("preserves CommonJS wrapper defaults through uninitialized var redeclarations", async () => {
+  const root = await createTestTempDirectory("rea-commonjs-wrapper-vars-");
+  await writeFile(join(root, "dep.cjs"), "module.exports = 42;");
+  const sources = [
+    ["control.cjs", "", "exports.value = value;"],
+    ["require.cjs", "var require;", "exports.value = value;"],
+    ["exports.cjs", "var exports;", "exports.value = value;"],
+    ["module.cjs", "var module;", "module.exports.value = value;"],
+    ["combined.cjs", "var module, exports, require;", "exports.value = value;"],
+    [
+      "fresh.cjs",
+      "var module, require; module = {}; module.require = () => 99;",
+      "exports.value = value;",
+    ],
+    [
+      "unrelated.cjs",
+      "var module, require; Object.assign(module, { unrelated: 1 });",
+      "exports.value = value;",
+    ],
+    [
+      "global-property.cjs",
+      "var module, require; globalThis.module = { require: () => 99 };",
+      "exports.value = value;",
+    ],
+  ] as const;
+  const negativeSources = [
+    [
+      "reassigned.cjs",
+      `var module, exports, require; module = { exports: {} };
+         exports = {}; require = () => 99;
+         exports.value = require('./dep.cjs'); module.exports.value = 99;`,
+    ],
+    [
+      "nested.cjs",
+      `function local() { var module, exports, require;
+         module = { exports: {} }; exports = {}; require = () => 99;
+         exports.value = require('./dep.cjs'); module.exports.value = 99; }
+         local();`,
+    ],
+    [
+      "local.mjs",
+      `var module = { exports: {} }, exports = {}, require = () => 99;
+         exports.value = require('./dep.cjs'); module.exports.value = 99;`,
+    ],
+  ] as const;
+  for (const [name, source] of negativeSources)
+    await writeFile(join(root, name), source);
+  const delegates = [
+    ["delegated.cjs", "module.require = () => 99; module = {};"],
+    ["loop.cjs", "for (module.require of [() => 99]) {}"],
+    ["destructured.cjs", "[module.require] = [() => 99];"],
+    ["conditional.cjs", "if (false) module = {}; module.require = () => 99;"],
+    [
+      "alias-history.cjs",
+      "let saved = module; saved.require = () => 99; saved = {};",
+    ],
+    [
+      "computed-key.cjs",
+      "const key = 'require'; Object.assign(module, { [key]: () => 99 });",
+    ],
+    [
+      "spread-property.cjs",
+      "Object.assign(module, { ...{ require: () => 99 } });",
+    ],
+    [
+      "opaque-arguments.cjs",
+      "const args = [module, { require: () => 99 }]; Object.assign(...args);",
+    ],
+    [
+      "unknown-replacement.cjs",
+      "const saved = module; module = (() => saved)(); module.require = () => 99;",
+    ],
+    ["dynamic-scope.cjs", "with ({}) { module.require = () => 99; }"],
+  ] as const;
+  for (const [name, write] of delegates)
+    await writeCommonJsControl(
+      root,
+      name,
+      `var module, require; ${write}
+       const value = require('./dep.cjs'); exports.value = value;`,
+      99,
+    );
+  for (const [name, declaration, exportValue] of sources)
+    await writeCommonJsControl(
+      root,
+      name,
+      `${declaration} const value = require('./dep.cjs');
+       ${exportValue}`,
+      42,
+    );
+  const mcp = applicationEnvelope.parse(await analyzeThroughMcp(root));
+  const cli = applicationEnvelope.parse(
+    await runCli(["analyze-javascript-application", root, "--json"]),
+  );
+  expect(cli.normalized_result).toEqual(mcp.normalized_result);
+  for (const [name] of sources) {
+    const edges = mcp.normalized_result.graph.edges.filter(
+      ({ evidence }) =>
+        evidence.location.available &&
+        evidence.location.value.kind === "source-range" &&
+        evidence.location.value.source === name,
+    );
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "exposes",
+          properties: expect.objectContaining({
+            module_link_kind: "commonjs-export",
+            exported_name: "value",
+            resolution_mode: "require",
+          }),
+        }),
+        expect.objectContaining({
+          relation: "imports",
+          properties: expect.objectContaining({
+            module_link_kind: "require",
+            local_name: "value",
+            specifier: "./dep.cjs",
+            resolved_path: "dep.cjs",
+            resolution_mode: "require",
+          }),
+        }),
+      ]),
+    );
+  }
+  for (const [name] of negativeSources) {
+    const edges = mcp.normalized_result.graph.edges.filter(
+      ({ evidence, properties }) =>
+        evidence.location.available &&
+        evidence.location.value.kind === "source-range" &&
+        evidence.location.value.source === name &&
+        (properties.module_link_kind === "require" ||
+          properties.module_link_kind === "commonjs-export"),
+    );
+    expect(edges, name).toEqual([]);
+  }
+  expect(
+    mcp.normalized_result.graph.edges.filter(({ evidence, properties }) => {
+      const location = evidence.location;
+      if (!location.available || location.value.kind !== "source-range")
+        return false;
+      const source = location.value.source;
+      return (
+        delegates.some(([name]) => source === name) &&
+        properties.module_link_kind === "require"
+      );
+    }),
+  ).toEqual([]);
+});
+
 describe("exported function binding resolution through stdio MCP and CLI", () => {
   it.each([
     {
