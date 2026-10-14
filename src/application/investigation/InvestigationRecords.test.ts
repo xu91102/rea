@@ -175,6 +175,78 @@ describe("investigation record ownership", () => {
   });
 });
 
+describe("linked workflow unknown identity", () => {
+  it("retains distinct linked workflow unknowns and replays without adding history", () => {
+    const records = new InvestigationRecords();
+    const results = ["0x3000", "0x4000"].map((goal) =>
+      createEvidence(undefined, provider, {
+        operation: "build_call_path",
+        parameters: { goal },
+        result: { status: "unknown" },
+        confidence: "derived",
+        authority: "analyst-inference",
+      }),
+    );
+    for (const result of results) {
+      const recorded = records.recordEvidenceWithUnknown(result, {
+        ...unknownInput("Can the requested path be established?"),
+        supporting_evidence_ids: [result.evidence_id],
+      });
+      expect(recorded.ok).toBe(true);
+      expect(records.evidenceById(result.evidence_id)).toEqual(result);
+    }
+    const beforeReplay = records.exportEvidenceBundle();
+    const unknowns = records.listUnknowns();
+    expect(unknowns).toHaveLength(2);
+    expect(new Set(unknowns.map(({ unknown_id }) => unknown_id)).size).toBe(2);
+    expect(
+      unknowns
+        .map(({ supporting_evidence_ids }) => supporting_evidence_ids)
+        .sort(),
+    ).toEqual(results.map(({ evidence_id }) => [evidence_id]).sort());
+    for (const result of results)
+      expect(
+        records.recordEvidenceWithUnknown(result, {
+          ...unknownInput("Can the requested path be established?"),
+          supporting_evidence_ids: [result.evidence_id],
+        }),
+      ).toEqual({ ok: true, value: null });
+    expect(records.exportEvidenceBundle()).toEqual(beforeReplay);
+    const imported = new InvestigationRecords();
+    expect(imported.mergeEvidenceBundle(beforeReplay).ok).toBe(true);
+    expect(imported.exportEvidenceBundle()).toEqual(beforeReplay);
+  });
+
+  it("rejects a blank workflow question without recording its Evidence", () => {
+    const records = new InvestigationRecords();
+    expect(
+      records.recordEvidenceWithUnknown(evidence, {
+        ...unknownInput("Original valid question"),
+        question: " \n ",
+        supporting_evidence_ids: [evidence.evidence_id],
+      }).ok,
+    ).toBe(false);
+    expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
+  });
+
+  it.each([null, undefined])(
+    "keeps malformed Evidence failures atomic: %s",
+    (value) => {
+      const records = new InvestigationRecords();
+      const recorded = Reflect.apply(
+        records.recordEvidenceWithUnknown,
+        records,
+        [value, unknownInput("Can this workflow be recorded?")],
+      );
+      expect(recorded).toMatchObject({
+        ok: false,
+        error: { message: "Atomic Evidence validation failed" },
+      });
+      expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
+    },
+  );
+});
+
 it("retains complete mutation intent and distinguishes independent update requests", () => {
   const source = new InvestigationRecords();
   expect(source.recordEvidence(evidence).ok).toBe(true);

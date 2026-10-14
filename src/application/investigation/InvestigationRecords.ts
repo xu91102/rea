@@ -5,11 +5,12 @@ import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
-import type {
-  RecordUnknownInput,
-  ResidualUnknown,
-  UnknownStatus,
-  UpdateUnknownInput,
+import {
+  recordUnknownInputSchema,
+  type RecordUnknownInput,
+  type ResidualUnknown,
+  type UnknownStatus,
+  type UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
 import type { Result } from "../../domain/result.js";
 import { EvidenceLedger, type EvidenceImportDelta } from "./EvidenceLedger.js";
@@ -93,12 +94,27 @@ export class InvestigationRecords
     evidence: Evidence,
     input: RecordUnknownInput,
   ): Result<ResidualUnknown | null, AnalysisError> {
+    const parsed = recordUnknownInputSchema.safeParse(input);
+    const evidenceId = evidence?.evidence_id;
+    // Linked workflow results need independent identities; an explicit
+    // comparison scope already supplies one. Keep invalid inputs invalid.
+    const scoped =
+      parsed.success &&
+      evidenceId !== undefined &&
+      parsed.data.comparison_conclusion_scope === undefined &&
+      (parsed.data.supporting_evidence_ids.includes(evidenceId) ||
+        parsed.data.contradicting_evidence_ids.includes(evidenceId))
+        ? {
+            ...parsed.data,
+            question: `${parsed.data.question} (workflow ${evidenceId})`,
+          }
+        : input;
     return this.#evidence.recordWithUnknown(
       evidence,
-      input,
+      scoped,
       unknownMutationEvidence(undefined, {
         operation: "record_unknown",
-        input,
+        input: scoped,
       }),
     );
   }

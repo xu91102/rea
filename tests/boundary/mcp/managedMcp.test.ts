@@ -1,5 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,6 +16,8 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
+import { managedNativeBoundaryInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
+import { inspectMachoSchema } from "../../../src/domain/native/nativeInspection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -237,7 +239,8 @@ const verifyManagedCatalogAndNativeWorkflow = async (
     },
   });
   const native = MANAGED_NATIVE_VERIFICATION_EXAMPLE.native_observations[0];
-  if (native === undefined) throw new Error("missing native Evidence");
+  if (native === undefined || native.subject === null)
+    throw new Error("missing native Evidence subject");
   const wrong = await client.callTool({
     name: "verify_managed_native_boundaries",
     arguments: {
@@ -250,6 +253,70 @@ const verifyManagedCatalogAndNativeWorkflow = async (
   expect(parseMcpToolError(wrong)).toMatchObject({
     error: { code: "evidence_integrity_mismatch" },
   });
+  const emptyNative = createEvidence(
+    {
+      path: "native.bin",
+      sha256: native.subject.digest.sha256,
+      format: "mach-o",
+      architecture: "x86_64",
+    },
+    native.provider,
+    {
+      operation: "inspect_macho",
+      parameters: {},
+      result: {
+        ...inspectMachoSchema.parse(native.normalized_result),
+        exports: { items: [], total: 0, exhaustive: true, limitations: [] },
+      },
+    },
+  );
+  const missingResults: string[] = [];
+  const base = MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries;
+  const boundaries = managedNativeBoundaryInspectionSchema.parse(
+    base.normalized_result,
+  );
+  for (const name of ["missing_one", "missing_two", "missing_one"]) {
+    const managed = createEvidence(undefined, base.provider, {
+      operation: base.operation,
+      parameters: {},
+      result: {
+        ...boundaries,
+        pinvoke_imports: boundaries.pinvoke_imports.map((item) => ({
+          ...item,
+          import_name: name,
+        })),
+      },
+    });
+    const response = await client.callTool({
+      name: "verify_managed_native_boundaries",
+      arguments: {
+        managed_boundaries: managed,
+        native_observations: [emptyNative],
+      },
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const verifiedMissing = parseEvidence(structured(response));
+    expect(verifiedMissing.normalized_result).toMatchObject({
+      summary: { unresolved: 1 },
+    });
+    missingResults.push(verifiedMissing.evidence_id);
+  }
+  expect(missingResults[2]).toBe(missingResults[0]);
+  const unresolved = session.listUnknowns({
+    domain: "managed-native-verification",
+  });
+  expect(unresolved).toHaveLength(2);
+  expect(new Set(unresolved.map(({ unknown_id }) => unknown_id)).size).toBe(2);
+  expect(
+    unresolved
+      .map(({ supporting_evidence_ids }) => supporting_evidence_ids)
+      .sort(),
+  ).toEqual(
+    missingResults
+      .slice(0, 2)
+      .map((id) => [id])
+      .sort(),
+  );
 };
 
 const inspectManagedStaticWorkflow = async (

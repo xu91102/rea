@@ -135,6 +135,14 @@ is null. `total` counts all matching heads; each page preserves complete records
 in stable unknown ID order. Filters apply before paging. Pages reflect current
 session state, so keep the unknown ledger unchanged while traversing it.
 
+Automatically recorded workflow unknowns are tied to their supporting result
+Evidence. Distinct unresolved queries can coexist on one connection; replaying
+the same result while its initial revision remains current retains its unknown
+and history. The question identifies
+the result it belongs to. Explicit comparison scopes and analyst-authored unknowns
+keep their existing identity and optimistic revision rules. Existing bundles
+remain valid and retain their recorded questions and revisions.
+
 For a portable exported bundle, the CLI shares this projection:
 `rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
 The CLI validates and materializes that local bundle under its existing memory
