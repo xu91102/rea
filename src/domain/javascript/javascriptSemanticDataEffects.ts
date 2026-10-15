@@ -175,6 +175,7 @@ const collectDefaults = (
     const source = unwrapJavaScriptExpression(node.left).node;
     const candidate = configurationsByNode.get(source);
     if (candidate === undefined) return;
+    const value = primitiveValue(node.right);
     output.push({
       configId: `config:default:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "default",
@@ -183,8 +184,8 @@ const collectDefaults = (
       resultBindingId: outerAssignedBinding(node, context),
       key: candidate.operation.key,
       sourceConfigId: candidate.operation.configId,
-      value: primitiveValue(node.right),
-      resolution: primitiveValue(node.right) === null ? "partial" : "complete",
+      value,
+      resolution: value === null ? "partial" : "complete",
     });
   });
   return output;

@@ -919,9 +919,14 @@ export const dataEffectArgumentBindingId = (
 export const dataEffectPrimitive = (
   node: t.Node,
 ): string | number | boolean | null => {
-  if (t.isStringLiteral(node) || t.isNumericLiteral(node)) return node.value;
-  if (t.isBooleanLiteral(node)) return node.value;
-  return null;
+  if (
+    !t.isStringLiteral(node) &&
+    !t.isNumericLiteral(node) &&
+    !t.isBooleanLiteral(node)
+  )
+    return null;
+  const literal = readExactJavaScriptLiteral(node);
+  return literal.found ? literal.value : null;
 };
 
 /**

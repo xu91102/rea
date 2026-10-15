@@ -97,3 +97,77 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     expect(reads).toContainEqual(["environment", "PORT"]);
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains the graph with unknown overflowing configuration defaults through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-config-nonfinite-");
+    await writeFixtureFiles(root, {
+      "entry.mjs": [
+        'throw new Error("static fixture must never execute");',
+        "export const nullish = process.env.NULLISH ?? 1e400;",
+        "export const or = process.env.OR || 1e400;",
+        "export const finite = process.env.FINITE ?? 1e308;",
+        "export const zero = process.env.ZERO || 0;",
+        "export const disabled = process.env.DISABLED ?? false;",
+        'export const empty = process.env.EMPTY ?? "";',
+        "export const dynamic = process.env.DYNAMIC ?? Infinity;",
+        'export function unrelated() { return "retained"; }',
+      ].join("\n"),
+    });
+    const graph = (await analyzeJavaScriptDirectory(surface, cli, root))
+      .semantic_graph;
+    const defaults = graph.nodes.filter(
+      (node) =>
+        node.kind === "config-source" &&
+        node.properties.source_kind === "default",
+    );
+    expect(
+      defaults
+        .map((node) => [node.properties.key, node.properties.value])
+        .sort(),
+    ).toEqual([
+      ["DISABLED", false],
+      ["DYNAMIC", null],
+      ["EMPTY", ""],
+      ["FINITE", 1e308],
+      ["NULLISH", null],
+      ["OR", null],
+      ["ZERO", 0],
+    ]);
+    for (const node of defaults) {
+      const edges = graph.relations.filter(
+        (relation) =>
+          relation.source_node_id === node.node_id &&
+          relation.relation === "defaults",
+      );
+      expect(edges).toHaveLength(1);
+      expect(edges[0]?.resolution).toBe(
+        node.properties.value === null ? "candidate" : "resolved",
+      );
+      const source = graph.nodes.find(
+        (candidate) =>
+          candidate.kind === "config-source" &&
+          candidate.properties.source_kind === "environment" &&
+          candidate.properties.key === node.properties.key,
+      );
+      expect(source).toBeDefined();
+      expect(graph.relations).toContainEqual(
+        expect.objectContaining({
+          source_node_id: source?.node_id,
+          target_node_id: node.node_id,
+          relation: "overrides",
+          resolution: edges[0]?.resolution,
+        }),
+      );
+    }
+    expect(
+      graph.nodes.some(
+        (node) => node.kind === "function" && node.label === "unrelated",
+      ),
+    ).toBe(true);
+    expect(
+      graph.coverage.families.find(({ family }) => family === "configuration"),
+    ).toMatchObject({ status: "partial" });
+  },
+);
