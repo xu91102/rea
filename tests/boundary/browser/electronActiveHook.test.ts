@@ -56,7 +56,13 @@ const utilityProcess = {
     return child;
   },
 };
-const shell = { openExternal: () => Promise.resolve(), openPath: () => Promise.resolve() };
+const nativeShellCalls = [];
+const shell = {
+  openExternal: () => Promise.resolve(),
+  openPath: () => Promise.resolve(),
+  showItemInFolder: () => { nativeShellCalls.push("showItemInFolder"); },
+  writeShortcutLink: () => { nativeShellCalls.push("writeShortcutLink"); return true; },
+};
 const createSession = () => {
   const value = new EventEmitter();
   value.setPermissionRequestHandler = () => undefined;
@@ -81,6 +87,7 @@ module.exports = {
     fromPartition: () => customSession,
   },
   shell,
+  nativeShellCalls,
   utilityProcess,
 };
 `;
@@ -128,6 +135,65 @@ afterEach(async () => {
       .splice(0)
       .map(async (path) => rm(path, { force: true, recursive: true })),
   );
+});
+
+it("blocks synchronous shell effects with their native return shapes and shape-only evidence", async () => {
+  const root = await createTestTempDirectory("rea-electron-hook-sync-shell-");
+  temporary.push(root);
+  await writeElectronFixture(root);
+  const script = join(root, "sync-shell.cjs");
+  await writeFile(
+    script,
+    `const electron = require("electron");
+const reveal = electron.shell.showItemInFolder("fixture-secret-reveal.txt");
+const created = electron.shell.writeShortcutLink("fixture-secret-shortcut.lnk", { target: "fixture-secret-target.exe" });
+const updated = electron.shell.writeShortcutLink("fixture-secret-shortcut.lnk", "update", { target: "fixture-secret-target.exe" });
+process.stdout.write(JSON.stringify({
+  reveal_type: typeof reveal,
+  shortcut_results: [created, updated],
+  native_calls: electron.nativeShellCalls,
+  snapshot: globalThis.__reaElectronActiveSnapshot(),
+}) + "\\n");`,
+  );
+  const execution = await runNode(script, root);
+  expect(execution.code, execution.stderr).toBe(0);
+  const result = JSON.parse(execution.stdout) as {
+    readonly reveal_type: string;
+    readonly shortcut_results: readonly boolean[];
+    readonly native_calls: readonly string[];
+    readonly snapshot: {
+      readonly hook_error: boolean;
+      readonly events: readonly unknown[];
+    };
+  };
+  expect(result.native_calls).toEqual([]);
+  expect(result.reveal_type).toBe("undefined");
+  expect(result.shortcut_results).toEqual([false, false]);
+  expect(result.snapshot.hook_error).toBe(false);
+  const events = electronActiveTimelineEventSchema
+    .array()
+    .parse(result.snapshot.events);
+  expect(events.filter(({ kind }) => kind === "shell-attempt")).toEqual([
+    expect.objectContaining({
+      event: "showItemInFolder",
+      phase: "blocked",
+      error: true,
+      argument_shapes: ["string"],
+    }),
+    expect.objectContaining({
+      event: "writeShortcutLink",
+      phase: "blocked",
+      error: true,
+      argument_shapes: ["string", "object"],
+    }),
+    expect.objectContaining({
+      event: "writeShortcutLink",
+      phase: "blocked",
+      error: true,
+      argument_shapes: ["string", "string", "object"],
+    }),
+  ]);
+  expect(JSON.stringify(result.snapshot)).not.toContain("fixture-secret");
 });
 
 it("retains active hook evidence within its event-retention budget", async () => {

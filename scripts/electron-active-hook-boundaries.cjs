@@ -337,7 +337,12 @@ const createElectronActiveBoundaryPatches = ({
 
   const patchShell = (shell) => {
     if (shell === null || shell === undefined) return;
-    for (const method of ["openExternal", "openPath"]) {
+    for (const method of [
+      "openExternal",
+      "openPath",
+      "showItemInFolder",
+      "writeShortcutLink",
+    ]) {
       const original = shell[method];
       if (typeof original !== "function") continue;
       shell[method] = function blockedShellCall(...args) {
@@ -345,6 +350,8 @@ const createElectronActiveBoundaryPatches = ({
           argument_shape_values: args,
           error: true,
         });
+        if (method === "showItemInFolder") return undefined;
+        if (method === "writeShortcutLink") return false;
         return Promise.reject(new Error("External shell effects are blocked"));
       };
     }
