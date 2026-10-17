@@ -426,8 +426,17 @@ const readRows = (
   const visibleColumns = table.columns
     .filter((column) => column.hidden !== 1)
     .map((column) => column.name);
-  const columns = input.columns ?? visibleColumns;
   const available = new Set(visibleColumns);
+  if (
+    input.columns === undefined &&
+    new Set(visibleColumns.map(sqliteIdentifierKey)).size !==
+      visibleColumns.length
+  )
+    throw new SqliteInspectionFailure(
+      "format",
+      "SQLite column names are ambiguous after text decoding; automatic row selection cannot preserve their identity.",
+    );
+  const columns = input.columns ?? visibleColumns;
   for (const name of columns)
     if (!available.has(name))
       throw new SqliteInspectionFailure(

@@ -28,6 +28,119 @@ import { cliTest } from "../support/cli/cliFixture.js";
 const digest = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
 
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).for([
+  ["col", "�ol"],
+  ["COL", "�ol"],
+  ["col", "safe"],
+  ["Éol", "éol"],
+] as const)(
+  "preserves SQLite column identity for %s and %s",
+  async ([firstName, secondName], { cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-column-identity-");
+    const path = join(root, "selected.db");
+    const database = new DatabaseSync(path);
+    try {
+      database.exec(
+        `CREATE TABLE records("${firstName}" TEXT, "${secondName}" TEXT);
+         INSERT INTO records VALUES ('first-column', 'second-column');`,
+      );
+    } finally {
+      database.close();
+    }
+    const before = await readFile(path);
+    const arguments_ = [
+      "inspect-sqlite-database",
+      path,
+      "--schema-scope",
+      "inventory",
+      "--table",
+      "records",
+      "--json",
+    ];
+    const valid = await cli.run({ arguments: arguments_ });
+    expect(valid.exitCode).toBe(0);
+    expect(valid.json).toMatchObject({
+      normalized_result: {
+        rows: {
+          columns: [firstName, secondName],
+          values: [[{ value: "first-column" }, { value: "second-column" }]],
+        },
+      },
+    });
+    const malformed = Buffer.from(before);
+    const marker = Buffer.from(`"${firstName}"`);
+    const offset = malformed.indexOf(marker);
+    if (offset < 0 || malformed.indexOf(marker, offset + 1) !== -1)
+      throw new Error("Column declaration marker is not unique");
+    malformed[offset + 1] = 0xff;
+    await writeFile(path, malformed);
+    const oracle = new DatabaseSync(path, { readOnly: true });
+    try {
+      const statement = oracle.prepare("SELECT * FROM records");
+      statement.setReturnArrays(true);
+      expect(statement.all()).toEqual([["first-column", "second-column"]]);
+    } finally {
+      oracle.close();
+    }
+    const invalid = {
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["path"], reason: "invalid_format" }],
+      },
+    };
+    const rejected = await cli.run({ arguments: arguments_ });
+    expect(rejected.exitCode).toBe(1);
+    expect(rejected.json).toMatchObject(invalid);
+    const { client, call } = await connectLocalToolsMcp();
+    const input = { path, schema_scope: "inventory", table: "records" };
+    const response = await call("inspect_sqlite_database", input);
+    expect(parseMcpToolError(response).error).toMatchObject(invalid);
+    await expect(client.ping()).resolves.toEqual({});
+    const selected = await call("inspect_sqlite_database", {
+      ...input,
+      columns: [secondName, secondName],
+    });
+    expect(selected.isError).not.toBe(true);
+    expect(selected.structuredContent).toMatchObject({
+      normalized_result: {
+        rows: {
+          columns: [secondName, secondName],
+          values: [[{ value: "second-column" }, { value: "second-column" }]],
+        },
+      },
+    });
+    const text = selected.content.find((content) => content.type === "text");
+    if (text?.type !== "text") throw new Error("Missing SQLite Evidence text");
+    expect(JSON.parse(text.text)).toEqual(selected.structuredContent);
+    const inventory = await call("inspect_sqlite_database", { path });
+    expect(inventory.isError).not.toBe(true);
+    expect(inventory.structuredContent).toMatchObject({
+      normalized_result: {
+        schema: {
+          scope: "inventory",
+          completeness: "complete",
+          tables: [{ columns: [], columns_completeness: "not_requested" }],
+        },
+        rows: null,
+      },
+    });
+    const expanded = await cli.run({
+      arguments: [
+        "inspect-sqlite-database",
+        path,
+        "--schema-scope",
+        "database",
+        "--table",
+        "records",
+        "--json",
+      ],
+    });
+    expect(expanded.exitCode).toBe(1);
+    expect(expanded.json).toMatchObject(invalid);
+    expect(await readFile(path)).toEqual(malformed);
+  },
+);
+
 for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
   cliTest.skipIf(expectedErrno === "ELOOP" && process.platform === "win32")(
     `reports an initial ${expectedErrno} path failure through CLI and MCP`,
