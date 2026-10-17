@@ -106,3 +106,119 @@ it("keeps sibling literals when a later data property replaces the setter", () =
     ]),
   });
 });
+
+it("invalidates a setter receiver selected through an array element", () => {
+  expect(
+    returned(`
+      export function observe() {
+        const state = { list: [{ value: 1, set update(next) { this.value = next; } }] };
+        state.list[0].update = 2;
+        return state.list[0].value;
+      }
+    `),
+  ).toMatchObject({ status: "unknown" });
+});
+
+const setter = "{ value: 1, set update(next) { this.value = next; } }";
+
+it.each([
+  ["root array", `[${setter}]`, "state[0].update = 2;", "state[0].value"],
+  [
+    "quoted index",
+    `{ list: [${setter}] }`,
+    'state.list["0"].update = 2;',
+    "state.list[0].value",
+  ],
+  [
+    "nested arrays",
+    `[[${setter}]]`,
+    "state[0][0].update = 2;",
+    "state[0][0].value",
+  ],
+  ["array hole", `[, ${setter}]`, "state[1].update = 2;", "state[1].value"],
+  [
+    "literal spread",
+    `[...[${setter}]]`,
+    "state[0].update = 2;",
+    "state[0].value",
+  ],
+  [
+    "uncertain preceding spread",
+    `[...prefix, ${setter}]`,
+    "state[1].update = 2;",
+    "state[1].value",
+  ],
+  [
+    "following spread",
+    `[${setter}, ...prefix]`,
+    "state[0].update = 2;",
+    "state[0].value",
+  ],
+])(
+  "invalidates the selected setter through %s",
+  (_label, initial, write, read) => {
+    expect(
+      returned(
+        `export function observe(prefix) { const state = ${initial}; ${write} return ${read}; }`,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  },
+);
+
+it.each([
+  [
+    "ordinary selected element",
+    "[{ value: 1, update: 0 }]",
+    "state[0].update = 2;",
+    "state[0].value",
+  ],
+  ["unwritten accessor", `[${setter}]`, "", "state[0].value"],
+  [
+    "deleted accessor",
+    `[${setter}]`,
+    "delete state[0].update;",
+    "state[0].value",
+  ],
+  [
+    "replaced accessor",
+    "[{ value: 1, set update(next) {}, update: 0 }]",
+    "state[0].update = 2;",
+    "state[0].value",
+  ],
+  [
+    "different element",
+    `[${setter}, { value: 1, update: 0 }]`,
+    "state[1].update = 2;",
+    "state[1].value",
+  ],
+  [
+    "sibling of written setter",
+    `[{ value: 1, update: 0 }, ${setter}]`,
+    "state[1].update = 2;",
+    "state[0].value",
+  ],
+  [
+    "exact prefix before spread",
+    `[{ value: 1, update: 0 }, ...prefix, ${setter}]`,
+    "state[0].update = 2;",
+    "state[0].value",
+  ],
+])("keeps the exact literal for %s", (_label, initial, write, read) => {
+  expect(
+    returned(
+      `export function observe(prefix) { const state = ${initial}; ${write} return ${read}; }`,
+    ),
+  ).toMatchObject({ status: "literal", value: 1 });
+});
+
+it("handles a large uncertain array selection without exhausting call arguments", () => {
+  expect(
+    returned(`
+      export function observe(prefix) {
+        const state = [...prefix, ${"0,".repeat(500_000)}{ value: 1, update: 0 }];
+        state[500000].update = 2;
+        return state[500000].value;
+      }
+    `),
+  ).toMatchObject({ status: "unknown" });
+});

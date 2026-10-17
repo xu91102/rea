@@ -99,32 +99,44 @@ const localSetterReceiver = (
     readonly projection: readonly unknown[];
   }[],
   path: readonly unknown[],
-): readonly string[] | undefined => {
+): PropertyPath | undefined => {
   const key = path.at(-1);
   if (typeof key !== "string") return undefined;
   const receiver = path.slice(0, -1);
-  if (!receiver.every((segment) => typeof segment === "string"))
+  if (
+    !receiver.every(
+      (segment) => typeof segment === "string" || typeof segment === "number",
+    )
+  )
     return undefined;
-  for (const { node, projection } of initializers) {
-    if (projection.length !== 0) continue;
-    let object: t.Node | undefined = unwrapJavaScriptExpression(node).node;
-    for (const segment of receiver) {
-      if (!t.isObjectExpression(object)) break;
-      const member: t.ObjectExpression["properties"][number] | undefined =
-        object.properties.findLast(
-          (property) =>
-            t.isObjectProperty(property) &&
-            semanticStaticPropertyKey(property.key, property.computed) ===
-              segment,
-        );
-      object = t.isObjectProperty(member)
-        ? unwrapJavaScriptExpression(member.value).node
-        : undefined;
+  const pending: { readonly node: t.Node; readonly path: PropertyPath }[] =
+    initializers.flatMap(({ node, projection }) =>
+      projection.length === 0 ? [{ node, path: receiver }] : [],
+    );
+  while (pending.length !== 0) {
+    const current = pending.pop()!;
+    const object = unwrapJavaScriptExpression(current.node).node;
+    if (current.path.length === 0) {
+      if (!t.isObjectExpression(object)) continue;
+      const keys = setterKeys(object);
+      if (keys !== null && (keys.computed || keys.names.has(key)))
+        return receiver;
+    } else if (t.isArrayExpression(object)) {
+      // Reuse the reference owner's index, hole and spread selection rules.
+      for (const reference of arrayReferencedValues(object, current.path))
+        pending.push(reference);
+    } else if (t.isObjectExpression(object)) {
+      const [segment, ...remaining] = current.path;
+      if (typeof segment !== "string" && typeof segment !== "number") continue;
+      const member = object.properties.findLast(
+        (property) =>
+          t.isObjectProperty(property) &&
+          semanticStaticPropertyKey(property.key, property.computed) ===
+            String(segment),
+      );
+      if (t.isObjectProperty(member))
+        pending.push({ node: member.value, path: remaining });
     }
-    if (!t.isObjectExpression(object)) continue;
-    const keys = setterKeys(object);
-    if (keys !== null && (keys.computed || keys.names.has(key)))
-      return receiver as readonly string[];
   }
   return undefined;
 };
