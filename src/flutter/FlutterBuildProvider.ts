@@ -12,6 +12,7 @@ import type {
 } from "../application/AnalysisProvider.js";
 import {
   createAnalysisExecution,
+  createAnalysisExecutionEvidence,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
 import type { FlutterRequest } from "../domain/flutter/flutterBuildAnalysis.js";
@@ -619,9 +620,17 @@ export class FlutterBuildProvider {
     } finally {
       if (snapshot !== undefined) await this.discardRoot(snapshot.root);
     }
-    if (signal?.aborted === true)
+    if (result.ok && signal?.aborted === true)
       return err(
-        new AnalysisCancelledError(request.operation, { cause: signal.reason }),
+        new AnalysisCancelledError(request.operation, {
+          cause: signal.reason,
+          partialObservation: createAnalysisExecutionEvidence(
+            request.operation,
+            request.input,
+            result.value,
+            "observed",
+          ),
+        }),
       );
     return result;
   }

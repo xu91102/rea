@@ -9,9 +9,13 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import type { EvidenceLocation } from "../domain/evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceLocation,
+} from "../domain/evidence.js";
 import type { EvidenceSubjectTarget } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "../domain/jsonValue.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
@@ -119,6 +123,23 @@ export function createAnalysisExecution(
     subject: options.subject ?? null,
   };
 }
+
+/** Compose the same completed facts for success and retained late-failure Evidence. */
+export const createAnalysisExecutionEvidence = (
+  operation: string,
+  input: unknown,
+  execution: AnalysisExecution,
+  confidence: "observed" | "derived",
+): Evidence =>
+  createEvidence(execution.subject ?? undefined, execution.provider, {
+    operation,
+    parameters: jsonObjectSchema.parse(input),
+    result: execution.result,
+    rawResult: execution.rawResult,
+    limitations: execution.limitations,
+    locations: execution.locations,
+    confidence,
+  });
 
 /** Provider-neutral application capability for one analysis operation. */
 export interface AnalysisOperationPort {

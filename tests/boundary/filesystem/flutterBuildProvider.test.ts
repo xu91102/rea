@@ -17,9 +17,11 @@ import { FlutterBuildProvider } from "../../../src/flutter/FlutterBuildProvider.
 import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
 import { finishAnalysisCommand } from "../../../src/cli/finishAnalysisCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import {
   AnalysisCancelledError,
+  AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -663,6 +665,151 @@ it("retains failed snapshot cleanup and retries it on close", async () => {
   await provider.close();
   expect(roots).toHaveLength(3);
   expect(roots[2]).toBe(roots[0]);
+});
+
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s retains completed Evidence when cancellation arrives during snapshot cleanup",
+  async (operation) => {
+    const apk = await buildApk("late-cancel.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotFixtureImage() },
+    ]);
+    const controller = new AbortController();
+    const reason = new Error("cancel during final snapshot removal");
+    const roots: string[] = [];
+    let interrupt = false;
+    const provider = new FlutterBuildProvider({
+      removeRoot: async (path) => {
+        roots.push(path);
+        await rm(path, { recursive: true, force: true });
+        if (interrupt) controller.abort(reason);
+      },
+    });
+    onTestFinished(() => provider.close());
+    const service = new FlutterBuildAnalysisService(provider);
+    const control = await service.execute(operation, { path: apk });
+    if (!control.ok) throw control.error;
+    interrupt = true;
+    const cancelled = await service.execute(
+      operation,
+      { path: apk },
+      { signal: controller.signal },
+    );
+    expect(cancelled.ok).toBe(false);
+    if (cancelled.ok) throw new Error("Cancellation must remain a failure");
+    expect(cancelled.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(cancelled.error.cause).toBe(reason);
+    expect(parseEvidence(cancelled.error.partialObservation)).toEqual(
+      control.value,
+    );
+    expect(projectAnalysisError(cancelled.error)).toMatchObject({
+      code: "cancelled",
+      details: {
+        operation,
+        cleanup: "complete",
+        partial_observation: control.value,
+      },
+    });
+    expect(roots).toHaveLength(2);
+    for (const root of roots)
+      await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    interrupt = false;
+    expect(await service.execute(operation, { path: apk })).toEqual(control);
+    await provider.close();
+    expect(roots).toHaveLength(3);
+  },
+);
+
+it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
+  "%s keeps completed facts and the same snapshot owner through cancelled cleanup retry",
+  async (operation) => {
+    const apk = await buildApk("cancel-cleanup-retry.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotFixtureImage() },
+    ]);
+    const controlProvider = new FlutterBuildProvider();
+    onTestFinished(() => controlProvider.close());
+    const control = await new FlutterBuildAnalysisService(
+      controlProvider,
+    ).execute(operation, { path: apk });
+    if (!control.ok) throw control.error;
+    const controller = new AbortController();
+    const reason = new Error("cancel during denied cleanup");
+    const roots: string[] = [];
+    let failing = true;
+    const provider = new FlutterBuildProvider({
+      removeRoot: async (path) => {
+        roots.push(path);
+        controller.abort(reason);
+        if (failing) throw new Error("snapshot removal denied");
+        await rm(path, { recursive: true, force: true });
+      },
+    });
+    onTestFinished(async () => {
+      failing = false;
+      await provider.close();
+    });
+    const service = new FlutterBuildAnalysisService(provider);
+    const failure = await finishAnalysisCommand(
+      async () => {
+        const result = await service.execute(
+          operation,
+          { path: apk },
+          { signal: controller.signal },
+        );
+        if (result.ok) throw new Error("Cancellation must remain a failure");
+        expect(result.error.cause).toBe(reason);
+        return result;
+      },
+      { close: () => provider.close() },
+      "flutter",
+      operation,
+    );
+    expect(roots).toHaveLength(2);
+    expect(roots[1]).toBe(roots[0]);
+    await expect(stat(roots[0]!)).resolves.toBeDefined();
+    expect(failure).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        resources: [roots[0]],
+        partial_observation: control.value,
+        diagnostics: { primary_error: { code: "cancelled" } },
+      },
+    });
+    failing = false;
+    await provider.close();
+    expect(roots).toEqual([roots[0], roots[0], roots[0]]);
+    await expect(stat(roots[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+    await provider.close();
+    expect(roots).toHaveLength(3);
+  },
+);
+
+it("preserves an input refusal ahead of cancellation during snapshot cleanup", async () => {
+  const root = await createTestTempDirectory("rea-flutter-primary-");
+  const apk = join(root, "invalid.apk");
+  await writeFile(apk, "not a ZIP archive");
+  const controller = new AbortController();
+  const reason = new Error("cancel after input refusal");
+  const provider = new FlutterBuildProvider({
+    removeRoot: async (path) => {
+      await rm(path, { recursive: true, force: true });
+      controller.abort(reason);
+    },
+  });
+  onTestFinished(() => provider.close());
+  const result = await new FlutterBuildAnalysisService(provider).execute(
+    "identify_flutter_build",
+    { path: apk },
+    { signal: controller.signal },
+  );
+  expect(controller.signal.aborted).toBe(true);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Malformed APK must remain a refusal");
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  expect(result.error.partialObservation).toBeUndefined();
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: ["path"], reason: "invalid_format" }] },
+  });
 });
 
 it("cancels before creating any snapshot root", async () => {

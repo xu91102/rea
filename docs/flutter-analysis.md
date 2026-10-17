@@ -129,6 +129,10 @@ server; older servers keep the complete request after schema discovery.
   `artifact_changed`. Provider-owned storage failures report a
   `resource_constraint` with their native I/O cause. Cancellation is checked
   during copying, metadata/symbol walks, string scanning, and after cleanup.
+  A cancellation during final cleanup retains the completed inspection Evidence
+  in `details.partial_observation`. An earlier parsing refusal keeps its
+  classification. One-shot CLI finalization reports failed cleanup as
+  `cleanup_incomplete`, retaining the same snapshot owner for retry.
 - **Bounded reads.** APK snapshots are bounded at 2 GiB, including while
   copying. Identification permits 768 MiB of cumulative library extraction;
   declared sizes are checked before extraction. Library reads are bounded at 256 MiB each and ZIP
