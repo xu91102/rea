@@ -677,6 +677,102 @@ describe("binary_overview capability requirements", () => {
   });
 });
 
+describe("trace_call_path requirements", () => {
+  const capabilities = (operations: readonly string[]) =>
+    operations.map((operation) => ({
+      operation,
+      available: true,
+      reason: null,
+    }));
+
+  it("reports a callable trace when address resolution and relationships are available", () => {
+    expect(
+      entry(
+        "trace_call_path",
+        status({
+          open: true,
+          kind: "executable",
+          capabilities: capabilities([
+            "procedure_address",
+            "procedure_callees",
+            "procedure_callers",
+          ]),
+        }),
+      ),
+    ).toMatchObject({ available: true, reason: "available" });
+  });
+
+  it.each(["procedure_callees", "procedure_callers"])(
+    "does not require the opposite direction when %s is available",
+    (operation) => {
+      expect(
+        entry(
+          "trace_call_path",
+          status({
+            open: true,
+            kind: "executable",
+            capabilities: capabilities(["procedure_address", operation]),
+          }),
+        ),
+      ).toMatchObject({ available: true, reason: "available" });
+    },
+  );
+
+  it.each([["procedure_address"], ["procedure_callees", "procedure_callers"]])(
+    "requires both address resolution and a relationship direction: %j",
+    (...operations) => {
+      expect(
+        entry(
+          "trace_call_path",
+          status({ open: true, capabilities: capabilities(operations) }),
+        ),
+      ).toMatchObject({ available: false, reason: "provider_missing" });
+    },
+  );
+
+  it("preserves an address-resolution refusal rather than advertising a trace", () => {
+    expect(
+      entry(
+        "trace_call_path",
+        status({
+          open: true,
+          capabilities: [
+            {
+              operation: "procedure_address",
+              available: false,
+              reason: "Address resolution denied",
+            },
+            ...capabilities(["procedure_callees", "procedure_callers"]),
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      available: false,
+      reason: "provider_unavailable",
+      remediation: "Address resolution denied",
+    });
+  });
+
+  it("uses an available direction without replacing the opposite direction's refusal", () => {
+    expect(
+      entry(
+        "trace_call_path",
+        status({
+          open: true,
+          capabilities: [
+            ...capabilities(["procedure_address", "procedure_callers"]),
+            {
+              operation: "procedure_callees",
+              available: false,
+              reason: "Forward expansion unavailable",
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ available: true, reason: "available" });
+  });
+});
+
 describe("trace_feature requirements", () => {
   const capabilities = (operations: readonly string[]) =>
     operations.map((operation) => ({

@@ -115,6 +115,10 @@ const ENHANCED_REQUIREMENTS: Readonly<
   get_objc_protocols: ["list_names"],
   batch_decompile: ["procedure_pseudo_code"],
   get_call_graph: ["procedure_callees", "procedure_callers"],
+  trace_call_path: [
+    "procedure_address",
+    ["procedure_callees", "procedure_callers"],
+  ],
   analyze_swift_types: ["list_procedures"],
   find_xrefs_to_name: ["list_names", "xrefs"],
   binary_overview: [
