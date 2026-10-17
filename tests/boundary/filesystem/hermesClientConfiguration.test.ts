@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { userInfo } from "node:os";
+import { join, relative } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -11,6 +12,10 @@ import {
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
+import {
+  HermesClientPathError,
+  resolveHermesClientHome,
+} from "../../../src/application/HermesClientHome.js";
 import {
   runUninstall,
   systemUninstallHost,
@@ -36,6 +41,49 @@ const hermesPath = (
   );
 
 describe("Hermes configuration paths", () => {
+  it.skipIf(process.platform === "win32")(
+    "uses the account home for a named-user override, independently of HOME",
+    async () => {
+      const account = userInfo();
+      const root = await createTestTempDirectory("rea-hermes-account-path-");
+      const home = join(root, "different-home");
+      const selected = join(root, "selected");
+      await mkdir(home);
+      await mkdir(selected);
+      const named = `~${account.username}/${relative(account.homedir, selected)}`;
+      expect(
+        resolveHermesClientHome(home, process.platform, {
+          HERMES_HOME: named,
+        }),
+      ).toBe(selected);
+      expect(
+        resolveHermesClientHome(home, process.platform, {
+          HERMES_HOME: "${SELECTED_HERMES_HOME}",
+          SELECTED_HERMES_HOME: named,
+        }),
+      ).toBe(selected);
+      expect(
+        resolveHermesClientHome(home, process.platform, {
+          HERMES_HOME: "~/profile",
+        }),
+      ).toBe(join(home, "profile"));
+    },
+  );
+
+  it("refuses an unresolved named-user override before interpreting it as a relative path", () => {
+    const otherAccount = `${userInfo().username}-other-account`;
+    expect(() =>
+      resolveHermesClientHome("/caller-home", process.platform, {
+        HERMES_HOME: `~${otherAccount}/profile`,
+      }),
+    ).toThrow(HermesClientPathError);
+    expect(() =>
+      resolveHermesClientHome("/caller-home", "win32", {
+        HERMES_HOME: `~${otherAccount}\\profile`,
+      }),
+    ).toThrow(/absolute HERMES_HOME/u);
+  });
+
   it("resolves config.yaml under the platform Hermes home", () => {
     expect(hermesPath({})).toEqual({
       name: "hermes",

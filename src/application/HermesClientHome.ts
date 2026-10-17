@@ -1,4 +1,5 @@
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { userInfo, type UserInfo } from "node:os";
 import {
   basename,
   dirname,
@@ -14,8 +15,9 @@ export class HermesClientPathError extends Error {
   constructor(
     readonly path: string,
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "HermesClientPathError";
   }
 }
@@ -60,6 +62,23 @@ const expandedDirectory = (
     (platform === "win32" && expanded.startsWith("~\\"))
   )
     return join(home, expanded.slice(2));
+  if (expanded.startsWith("~")) {
+    const end = expanded.search(platform === "win32" ? /[/\\]/u : /\//u);
+    const name = expanded.slice(1, end === -1 ? undefined : end);
+    const suffix = end === -1 ? "" : expanded.slice(end + 1);
+    const unresolved = `Cannot resolve named-user Hermes home ${JSON.stringify(expanded)}. Use an absolute HERMES_HOME path for the intended account.`;
+    // Node exposes the current account's home; do not guess another account's directory.
+    if (platform !== "win32") {
+      let account: UserInfo<string>;
+      try {
+        account = userInfo();
+      } catch (cause: unknown) {
+        throw new HermesClientPathError(expanded, unresolved, { cause });
+      }
+      if (name === account.username) return join(account.homedir, suffix);
+    }
+    throw new HermesClientPathError(expanded, unresolved);
+  }
   return resolve(expanded);
 };
 const physicalPath = (path: string): string => {

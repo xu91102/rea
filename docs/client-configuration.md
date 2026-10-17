@@ -289,6 +289,11 @@ repair the profile or run `hermes profile use default` before retrying.
 REA follows `HERMES_HOME` whitespace trimming, environment-variable expansion,
 and home expansion before resolving that profile. Setup previews the resolved
 configuration and skill destinations; doctor and uninstall use those same paths.
+On POSIX hosts, `~<current-account>` uses that account's OS home, independently
+of a caller-overridden `HOME`; bare `~` and `~/...` retain the caller's home.
+REA refuses other named-account forms, and named-account forms on Windows,
+with an instruction to set an absolute `HERMES_HOME` rather than writing into
+a relative directory whose name starts with `~`.
 
 ## Qoder CLI
 
