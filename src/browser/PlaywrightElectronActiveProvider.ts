@@ -1,3 +1,5 @@
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { electronFuseFailure } from "../electron/ElectronFuseFailures.js";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
@@ -60,6 +62,17 @@ type ElectronPaths = {
 
 /** Launch an owned Electron application through the official Playwright API. */
 export class PlaywrightElectronActiveProvider implements ElectronActiveObservationPort {
+  readonly #fuseResources = new ArtifactResourceScope();
+
+  /** Drain admitted fuse checks and retry their exact failed descriptor owners. */
+  async close(): Promise<void> {
+    try {
+      await this.#fuseResources.close();
+    } catch (cause: unknown) {
+      throw electronFuseFailure(cause, "fuse-preflight", OPERATION);
+    }
+  }
+
   constructor(
     private readonly environment: Readonly<Record<string, string | undefined>>,
     // Load Playwright only when a capture launches; MCP startup stays off its module graph.
@@ -97,14 +110,29 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         application: input.application_path,
         root: input.application_root,
       };
-      await runWithExecutionLimits(
-        assertNodeCliInspectArgumentsSupported(paths.executable, {
-          ...(options.signal === undefined ? {} : { signal: options.signal }),
-          readFuseImage: this.readFuseImage,
-        }),
-        options.signal,
-        startupDeadline,
-      );
+      const preflight = this.#fuseResources
+        .run(() =>
+          assertNodeCliInspectArgumentsSupported(input.executable_path, {
+            resources: this.#fuseResources,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            readFuseImage: this.readFuseImage,
+          }),
+        )
+        .catch((cause: unknown) => {
+          throw electronFuseFailure(cause, input.executable_path, OPERATION);
+        });
+      try {
+        await runWithExecutionLimits(
+          preflight,
+          options.signal,
+          startupDeadline,
+        );
+      } catch (interruption: unknown) {
+        // A startup interruption cannot abandon an admitted descriptor's final
+        // close. Its physical/cleanup failure takes precedence over the race.
+        await preflight;
+        throw interruption;
+      }
       const captureBaseline =
         await systemProcessOwnershipHost.captureBaseline?.(options.signal);
       if (options.signal?.aborted)
@@ -170,7 +198,9 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         };
       }
-      if (options.signal?.aborted === true)
+      if (cause instanceof AnalysisError && cause.cleanupIncomplete)
+        outcome = err(cause);
+      else if (options.signal?.aborted === true)
         outcome = err(
           new BrowserObservationError(OPERATION, "cancelled", {
             ...cancellationCause(cause, options.signal),

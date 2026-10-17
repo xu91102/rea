@@ -16,6 +16,8 @@ export type CanonicalElectronActiveObservationInput =
 /** Provider-neutral boundary for owned Electron runtime experiments. */
 export interface ElectronActiveObservationPort {
   identity(): ProviderIdentity;
+  /** Retry retained preflight resources without acquiring target execution authority. */
+  close?(): Promise<void>;
   capture(
     input: CanonicalElectronActiveObservationInput,
     options?: ExecutionOptions,

@@ -15,10 +15,16 @@ import {
   type ElectronFuseSlice,
 } from "../domain/electron/electronFuses.js";
 import {
-  openRegularFile,
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  assertArtifactReadActive,
+  withArtifactRegularFile,
+} from "../artifacts/ArtifactFileOperation.js";
+import type { FileHandle } from "node:fs/promises";
 
 /** Admission and search bounds for one Electron executable. */
 export const ELECTRON_FUSE_LIMITS = {
@@ -80,16 +86,17 @@ export const readElectronFuseImage = async (
     readonly signal?: AbortSignal;
     readonly chunkBytes?: number;
     readonly selection?: ResolvedElectronFuseFile;
+    readonly resources?: ArtifactResourceScope;
   },
 ): Promise<ElectronFuseImage> => {
   const signal = options?.signal;
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   const selection = options?.selection;
   const recheckPath = async (candidate: string) => {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     try {
       const metadata = await lstat(candidate, { bigint: true });
-      signal?.throwIfAborted();
+      assertArtifactReadActive(signal);
       return metadata;
     } catch (cause: unknown) {
       if (selection !== undefined && isMissingPath(cause))
@@ -138,35 +145,37 @@ export const readElectronFuseImage = async (
     throw new TypeError(
       `chunkBytes must be an integer between 1 and ${ELECTRON_FUSE_LIMITS.chunkBytes}.`,
     );
-  const handle = await openRegularFile(path, { symlinks: "reject", signal });
-  try {
-    const opened = await handle.stat({ bigint: true });
-    if (!sameRegularFileState(before, opened))
-      throw new RegularFileChangedError(path);
-    await assertPathNodes();
-    const readAt = readerFor(handle, size, path, signal);
-    const container = await identifyContainer(readAt, size, path);
-    const scanned = await scanSlices(
-      handle,
-      path,
-      size,
-      container.slices,
-      chunkBytes,
-      signal,
-    );
-    const current = await recheckPath(path);
-    if (!sameRegularFileState(before, current))
-      throw new RegularFileChangedError(path);
-    await assertPathNodes();
-    return {
-      sha256: scanned.sha256,
-      bytes: size,
-      format: container.format,
-      slices: scanned.slices,
-    };
-  } finally {
-    await handle.close();
-  }
+  return withArtifactRegularFile(
+    path,
+    options?.resources ?? new ArtifactResourceScope(),
+    signal,
+    async (handle) => {
+      const opened = await handle.stat({ bigint: true });
+      if (!sameRegularFileState(before, opened))
+        throw new RegularFileChangedError(path);
+      await assertPathNodes();
+      const readAt = readerFor(handle, size, path, signal);
+      const container = await identifyContainer(readAt, size, path);
+      const scanned = await scanSlices(
+        handle,
+        path,
+        size,
+        container.slices,
+        chunkBytes,
+        signal,
+      );
+      const current = await recheckPath(path);
+      if (!sameRegularFileState(before, current))
+        throw new RegularFileChangedError(path);
+      await assertPathNodes();
+      return {
+        sha256: scanned.sha256,
+        bytes: size,
+        format: container.format,
+        slices: scanned.slices,
+      };
+    },
+  );
 };
 
 /** Sentence describing the file and sentinel bounds enforced by this reader. */
@@ -175,13 +184,13 @@ export const electronFuseReadLimitation = (): string =>
 
 const readerFor =
   (
-    handle: Awaited<ReturnType<typeof openRegularFile>>,
+    handle: FileHandle,
     size: number,
     path: string,
     signal: AbortSignal | undefined,
   ): ReadAt =>
   async (offset, length) => {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     if (length <= 0 || offset < 0 || offset >= size) return new Uint8Array();
     const bounded = Math.min(length, size - offset);
     const buffer = Buffer.alloc(bounded);
@@ -271,7 +280,7 @@ const assertNonOverlappingSlices = (ranges: readonly SliceRange[]): void => {
 };
 
 const scanSlices = async (
-  handle: Awaited<ReturnType<typeof openRegularFile>>,
+  handle: FileHandle,
   path: string,
   size: number,
   ranges: readonly SliceRange[],
@@ -290,7 +299,7 @@ const scanSlices = async (
   const chunk = Buffer.allocUnsafe(chunkBytes);
   let position = 0;
   while (position < size) {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const length = Math.min(chunkBytes, size - position);
     const read = await handle.read(chunk, 0, length, position);
     if (read.bytesRead !== length) throw new RegularFileChangedError(path);
@@ -368,7 +377,7 @@ const absorbChunk = (
 };
 
 const parseWire = async (
-  handle: Awaited<ReturnType<typeof openRegularFile>>,
+  handle: FileHandle,
   path: string,
   sentinelOffset: number,
   sliceEnd: number,
@@ -421,13 +430,13 @@ const parseWire = async (
 };
 
 const readExact = async (
-  handle: Awaited<ReturnType<typeof openRegularFile>>,
+  handle: FileHandle,
   path: string,
   offset: number,
   length: number,
   signal: AbortSignal | undefined,
 ): Promise<Buffer> => {
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   const buffer = Buffer.alloc(length);
   const read = await handle.read(buffer, 0, length, offset);
   if (read.bytesRead !== length) throw new RegularFileChangedError(path);
