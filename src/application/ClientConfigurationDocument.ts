@@ -135,9 +135,17 @@ const parseClientToml = (text: string): Record<string, unknown> => {
 const parseDocument = (
   text: string,
   format: ClientConfigurationFormat,
+  clientName?: string,
 ): Record<string, unknown> => {
   if (format === "toml" || format === "grok")
     return requireObject(parseClientToml(text), "The configuration root");
+  // Claude Code accepts an initial BOM, but rejects JSONC and empty files.
+  // Select by client identity: other clients sharing `json` accept JSONC.
+  if (format === "json" && clientName === "claude_code")
+    return requireObject(
+      JSON.parse(text.replace(/^\uFEFF/u, "")),
+      "The configuration root",
+    );
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
@@ -205,17 +213,18 @@ export const parseZcodeFallbackConfiguration = (
 /** Members of OpenCode V2's `mcp` object that are not server names. */
 const OPENCODE_V2_MCP_SETTINGS = new Set(["servers", "timeout"]);
 
-/** Parse a client document and reject malformed roots or MCP server tables. */
+/** Parse a client document; native syntax requires the selected client identity. */
 export const parseClientConfiguration = (
   text: string,
   format: ClientConfigurationFormat | undefined,
+  clientName?: string,
 ): ClientConfigurationDocument => {
   if (format === undefined || format === "unsupported")
     throw new TypeError("client does not have a supported MCP config format");
   // DeepSeek Harness stores a Cordis patch list, not a server table.
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
-  const document = parseDocument(text, format);
+  const document = parseDocument(text, format, clientName);
   const serversKey = clientConfigurationServersKey(format);
   const value = document[serversKey];
   const servers =

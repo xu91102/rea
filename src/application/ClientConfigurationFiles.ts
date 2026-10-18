@@ -66,6 +66,7 @@ export const readConfigurationFile = async (
   path: string,
   format: SetupClient["format"],
   resources?: ArtifactResourceScope,
+  clientName?: string,
 ): Promise<
   Result<ClientConfigurationDocument | undefined, ClientConfigurationFileError>
 > => {
@@ -74,7 +75,7 @@ export const readConfigurationFile = async (
   const content = source.value;
   if (content === undefined) return ok(undefined);
   try {
-    return ok(parseClientConfiguration(content, format));
+    return ok(parseClientConfiguration(content, format, clientName));
   } catch (cause: unknown) {
     return err({
       kind: "malformed",
@@ -97,6 +98,7 @@ export const readClientConfigurationFiles = async (
       path,
       client.format,
       resources,
+      client.name,
     );
     if (!document.ok) return document;
     if (document.value !== undefined) {

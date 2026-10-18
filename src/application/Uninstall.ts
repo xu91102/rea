@@ -422,7 +422,11 @@ const readClientConfiguration = async (
     );
   }
   try {
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = parseClientConfiguration(
+      original,
+      client.format,
+      client.name,
+    );
     return { kind: "configuration", transactionPath, original, parsed };
   } catch (cause: unknown) {
     return itemRead(
@@ -592,6 +596,7 @@ const removeClient = async (
         const readback = parseClientConfiguration(
           await fileSystem.readText(publication.path),
           client.format,
+          client.name,
         );
         await publication.assertCurrent();
         if (

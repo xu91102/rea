@@ -159,6 +159,7 @@ const configureClientDocument = async (
           ? ""
           : "{}"),
       format,
+      client.name,
     );
     const policy = await readClientPolicyBlock(
       client,
@@ -319,6 +320,7 @@ const persistClientConfiguration = async ({
       const readback = parseClientConfiguration(
         await readRegularFileText(publication.path),
         format,
+        client.name,
       );
       await publication.assertCurrent();
       if (
@@ -381,7 +383,11 @@ export const clientConfigurationAligned = async (
       return false;
     }
     const original = await readRegularFileText(client.configPath);
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = parseClientConfiguration(
+      original,
+      client.format,
+      client.name,
+    );
     const policy = await readClientPolicyBlock(
       client,
       parsed,
@@ -520,7 +526,11 @@ const inspectClientDocument = async (
     };
   }
   try {
-    const parsed = parseClientConfiguration(original, client.format);
+    const parsed = parseClientConfiguration(
+      original,
+      client.format,
+      client.name,
+    );
     const policy = await readClientPolicyBlock(
       client,
       parsed,

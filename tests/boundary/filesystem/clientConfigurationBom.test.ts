@@ -35,7 +35,10 @@ describe.each([
       );
       if (client?.format === undefined) throw new Error(`missing ${name}`);
       const serversKey = clientConfigurationServersKey(client.format);
-      const original = `${bom}// Keep the client preferences.\r\n${JSON.stringify(
+      // Native Claude Code accepts the BOM, but not JSONC comments.
+      const comment =
+        name === "claude_code" ? "" : "// Keep the client preferences.\r\n";
+      const original = `${bom}${comment}${JSON.stringify(
         {
           label: "left\uFEFFright",
           [serversKey]: { other: { command: "other" } },
@@ -58,19 +61,17 @@ describe.each([
         backupPath: `${client.configPath}.rea.backup`,
       });
       const updated = await readFile(client.configPath, "utf8");
+      expect(updated.startsWith(`${bom}${comment}{\r\n`)).toBe(true);
       expect(
-        updated.startsWith(`${bom}// Keep the client preferences.\r\n`),
-      ).toBe(true);
-      expect(parseClientConfiguration(updated, client.format).document).toEqual(
-        {
-          label: "left\uFEFFright",
-          [serversKey]: {
-            other: { command: "other" },
-            rea: clientRegistrationEntry(client.format, command, {}),
-          },
-          theme: "dark",
+        parseClientConfiguration(updated, client.format, client.name).document,
+      ).toEqual({
+        label: "left\uFEFFright",
+        [serversKey]: {
+          other: { command: "other" },
+          rea: clientRegistrationEntry(client.format, command, {}),
         },
-      );
+        theme: "dark",
+      });
       expect(await clientConfigurationAligned(client, {}, command)).toBe(true);
       expect(await inspectClientConfiguration(client, {}, command)).toEqual({
         status: "already_current",

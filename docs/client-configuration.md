@@ -106,6 +106,13 @@ app is unverified.
 
 ## Claude Code
 
+Claude Code reads `.claude.json` as JSON, with an optional initial UTF-8 BOM.
+Comments, trailing commas and an empty existing file are malformed. Setup
+leaves such a file unchanged and doctor reports its registration as invalid;
+repair the JSON before retrying. This does not change JSONC support for other
+clients, such as Cursor. Missing configuration files can still be created by
+approved setup, with unrelated settings and existing backups preserved.
+
 Claude Code normally defers MCP tool definitions through tool search. It
 [turns tool search off](https://code.claude.com/docs/en/mcp#configure-tool-search)
 when `ANTHROPIC_BASE_URL` points to a non-first-party host, such as DeepSeek's
