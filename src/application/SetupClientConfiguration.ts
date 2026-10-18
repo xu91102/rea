@@ -33,6 +33,7 @@ import {
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import { readClientRegistrationTimeout } from "./ClientRegistrationTimeout.js";
 import {
   MCP_STARTUP_POLICY,
   recommendedMcpToolTimeoutMs,
@@ -764,38 +765,29 @@ const clientConfigurationDesired = (
       ? {
           startup_timeout_sec:
             client.name === "codex"
-              ? (positiveTimeout(previous, "startup_timeout_sec") ??
-                MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)
+              ? (readClientRegistrationTimeout(
+                  previous,
+                  "startup_timeout_sec",
+                ) ?? MCP_STARTUP_POLICY.codexStartupTimeoutSeconds)
               : MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
         }
       : {}),
     ...(client.name === "codex"
       ? {
           tool_timeout_sec:
-            positiveTimeout(previous, "tool_timeout_sec") ??
+            readClientRegistrationTimeout(previous, "tool_timeout_sec") ??
             recommendedMcpToolTimeoutSeconds(validated.value.timeoutInputs),
         }
       : {}),
     ...(client.name === "kimi"
       ? {
           startupTimeoutMs:
-            positiveTimeout(previous, "startupTimeoutMs") ??
+            readClientRegistrationTimeout(previous, "startupTimeoutMs") ??
             MCP_STARTUP_POLICY.kimiStartupTimeoutMs,
           toolTimeoutMs:
-            positiveTimeout(previous, "toolTimeoutMs") ??
+            readClientRegistrationTimeout(previous, "toolTimeoutMs") ??
             recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
         }
       : {}),
   };
-};
-
-const positiveTimeout = (
-  registration: unknown,
-  key: string,
-): number | undefined => {
-  if (typeof registration !== "object" || registration === null) return;
-  const value: unknown = Reflect.get(registration, key);
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? value
-    : undefined;
 };

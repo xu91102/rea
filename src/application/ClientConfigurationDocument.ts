@@ -104,12 +104,32 @@ export const clientConfigurationServersKey = (
 const isEmptyClientConfigurationText = (text: string): boolean =>
   text.replace(/^\uFEFF/, "").trim() === "";
 
+const requireTomlIntegerRange = (value: unknown): void => {
+  if (typeof value === "bigint") {
+    if (
+      value < -9_223_372_036_854_775_808n ||
+      value > 9_223_372_036_854_775_807n
+    )
+      throw new RangeError("TOML integer is outside the signed 64-bit range");
+  } else if (typeof value === "object" && value !== null) {
+    for (const child of Object.values(value)) requireTomlIntegerRange(child);
+  }
+};
+
+/** Keep client Int64 values exact without changing safe numeric settings. */
+const parseClientToml = (text: string) => {
+  const document = parseToml(text, { integersAsBigInt: "asNeeded" });
+  // The dependency's BigInt mode is unbounded; the client TOML range is not.
+  requireTomlIntegerRange(document);
+  return document;
+};
+
 const parseDocument = (
   text: string,
   format: ClientConfigurationFormat,
 ): Record<string, unknown> => {
   if (format === "toml" || format === "grok")
-    return requireObject(parseToml(text), "The configuration root");
+    return requireObject(parseClientToml(text), "The configuration root");
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
@@ -645,6 +665,7 @@ const tomlInlineKey = (key: string): string =>
 const tomlInlineValue = (value: unknown): string => {
   if (typeof value === "string") return tomlBasicString(value);
   if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "bigint") return String(value);
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   if (Array.isArray(value))
     return `[${value.map((item) => tomlInlineValue(item)).join(", ")}]`;
@@ -817,7 +838,7 @@ const rebuildDelimitedEntries = (
  */
 const tomlStringValue = (text: string): string | undefined => {
   try {
-    const value = parseToml(`value = ${text}`)["value"];
+    const value = parseClientToml(`value = ${text}`)["value"];
     return typeof value === "string" ? value : undefined;
   } catch (cause: unknown) {
     void cause;
@@ -1244,7 +1265,7 @@ const tomlTextHolds = (
 ): boolean => {
   try {
     return clientConfigurationValuesEqual(
-      withoutEmptyServerTable(objectSchema.parse(parseToml(text))),
+      withoutEmptyServerTable(objectSchema.parse(parseClientToml(text))),
       withoutEmptyServerTable(document),
     );
   } catch (cause: unknown) {

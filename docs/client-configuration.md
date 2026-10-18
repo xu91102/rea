@@ -261,6 +261,11 @@ These values are client-side deadlines, so increase them in `~/.codex/config.tom
 workload needs more time. Devin honors `XDG_CONFIG_HOME` for its
 `devin/mcp_config.json` on non-Windows systems.
 
+REA's Codex and Grok Build configuration workflows preserve signed 64-bit
+TOML integers exactly, including large unrelated settings such as a history
+size limit. Malformed integers or values outside that range are rejected
+before configuration writes.
+
 ## OMP
 
 For OMP, setup writes a `type: "stdio"` entry to the user-level

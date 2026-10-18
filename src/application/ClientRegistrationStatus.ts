@@ -15,6 +15,10 @@ import { valid } from "semver";
 
 import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import {
+  clientRegistrationTimeoutSchema,
+  clientRegistrationTimeoutMilliseconds,
+} from "./ClientRegistrationTimeout.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import {
   MCP_STARTUP_POLICY,
@@ -84,10 +88,10 @@ const registrationSchema = z
   .object({
     command: z.string().min(1),
     args: z.array(z.string()).default([]),
-    startup_timeout_sec: z.number().positive().optional(),
-    tool_timeout_sec: z.number().positive().optional(),
-    startupTimeoutMs: z.number().positive().optional(),
-    toolTimeoutMs: z.number().positive().optional(),
+    startup_timeout_sec: clientRegistrationTimeoutSchema.optional(),
+    tool_timeout_sec: clientRegistrationTimeoutSchema.optional(),
+    startupTimeoutMs: clientRegistrationTimeoutSchema.optional(),
+    toolTimeoutMs: clientRegistrationTimeoutSchema.optional(),
     type: z.string().optional(),
     transport: z.string().optional(),
     serverName: z.string().optional(),
@@ -546,7 +550,10 @@ const timeoutAdvisory = (
   if (toolTimeout === undefined) return undefined;
   const providerAllowance = mcpProviderDeadlineAllowanceMs(timeoutInputs);
   const isKimi = client.name === "kimi";
-  const toolTimeoutMs = isKimi ? toolTimeout : toolTimeout * 1000;
+  const toolTimeoutMs = clientRegistrationTimeoutMilliseconds(
+    toolTimeout,
+    isKimi ? "milliseconds" : "seconds",
+  );
   if (toolTimeoutMs >= providerAllowance) return undefined;
   const setting = isKimi ? "toolTimeoutMs" : "tool_timeout_sec";
   const currentValue = isKimi
