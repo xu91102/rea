@@ -75,9 +75,29 @@ it("advertises exact valid schemas and records inline EVM interface evidence wit
     "inspect_evm_interface",
   );
   const { ajv, inputSchema } = schemas;
+  expect(inputSchema).toMatchObject({
+    properties: {
+      detail: {
+        type: "string",
+        enum: ["complete", "summary"],
+        default: "complete",
+        description: expect.stringContaining(
+          "summary retains that complete Evidence in this session",
+        ),
+      },
+    },
+    required: expect.not.arrayContaining(["detail"]),
+  });
   expect(
     ajv.validate(inputSchema, { path: value.artifact.path, encoding: "hex" }),
   ).toBe(true);
+  expect(
+    ajv.validate(inputSchema, {
+      path: value.artifact.path,
+      encoding: "hex",
+      detail: "partial",
+    }),
+  ).toBe(false);
   expect(
     ajv.validate(inputSchema, {
       path: value.artifact.path,
