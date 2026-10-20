@@ -1,8 +1,7 @@
-import { resolve } from "node:path";
-
 import { sealOwnedJsonInput } from "./application/OwnedJsonInput.js";
 import { readJsonInputFile } from "./application/JsonInputFile.js";
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
+import { absoluteCallerPath } from "./filesystem/callerPath.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
@@ -114,7 +113,7 @@ const URL_REFERENCE = /^(?:file:|[A-Za-z][A-Za-z0-9+.-]+:\/\/)/iu;
  * fields holding nonblank, non-URL strings are resolved, everything else passes
  * through untouched so shared schemas can reject blank paths and URLs. Shared MCP
  * contracts reject relative paths, so CLI workflows resolve operator-relative
- * values before validation.
+ * values before validation while preserving POSIX symlink/parent selection.
  */
 export const resolveCliJsonPaths = (
   value: unknown,
@@ -141,7 +140,7 @@ const resolveJsonPath = (
           typeof entry === "string" &&
           entry.trim().length > 0 &&
           !URL_REFERENCE.test(entry)
-            ? resolve(entry)
+            ? absoluteCallerPath(entry)
             : entry,
         ];
       return [key, resolveJsonPath(entry, tail)];

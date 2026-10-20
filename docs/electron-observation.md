@@ -116,6 +116,12 @@ The CLI and MCP surfaces accept the same schema. For a JSON request file:
 rea capture-electron-scenario scenario.json --json
 ```
 
+In CLI JSON requests, `executable_path`, `application_path`, and
+`application_root` may be relative to the operator's working directory. REA
+makes them absolute while preserving POSIX `link/../path` selection for the
+filesystem to resolve after following the symlink. MCP requests still require
+absolute local paths; both surfaces reject file URLs and blank paths.
+
 The result records action status and targets, correlated app/window/WebContents,
 preload, session, navigation, shell, permission, popup, download, protocol,
 native-addon, process, and IPC timeline events. IPC channels and argument-shape

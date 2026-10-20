@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -89,6 +89,63 @@ const createElectronApplication = async (root: string) => {
   await writeFile(join(application, "main.js"), "");
   return application;
 };
+
+cliTest.skipIf(isWindows)(
+  "preserves symlink parent traversal through CLI and MCP path admission",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-symlink-parent-");
+    const target = join(root, "real");
+    await mkdir(join(target, "inner"), { recursive: true });
+    const applicationRoot = join(target, "root");
+    await mkdir(applicationRoot);
+    const application = await createElectronApplication(target);
+    await symlink(join(target, "inner"), join(root, "link"));
+    const request = {
+      executable_path: join(root, "missing-electron"),
+      application_path: `${root}/link/../app`,
+      application_root: `${root}/link/../root`,
+    };
+    expect(await realpath(request.application_path)).toBe(
+      await realpath(application),
+    );
+    expect(await realpath(request.application_root)).toBe(
+      await realpath(applicationRoot),
+    );
+    const expected = {
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["executable_path"], reason: "invalid_value" }],
+      },
+    };
+
+    const { call } = await connectLocalToolsMcp();
+    const result = await call("capture_electron_scenario", request);
+    expect(result.isError).toBe(true);
+    expect(errorBody(result)).toMatchObject({ error: expected });
+
+    for (const paths of [
+      request,
+      {
+        ...request,
+        application_path: "link/../app",
+        application_root: "link/../root",
+      },
+    ]) {
+      const response = await cli.run({
+        arguments: [
+          "capture-electron-scenario",
+          JSON.stringify(paths),
+          "--format",
+          "json",
+        ],
+        cwd: root,
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(response.exitCode).toBe(1);
+      expect(response.json).toMatchObject(expected);
+    }
+  },
+);
 
 cliTest.skipIf(isWindows)(
   "rejects a non-executable Electron executable_path before launch through CLI and MCP",
