@@ -73,6 +73,57 @@ async function prepareMcpCapture(
 }
 
 captureTest(
+  "retains malformed gRPC-web trailer values as partial through CLI and MCP",
+  async ({ cli, mcp }) => {
+    const root = await createTestTempDirectory("rea-protobuf-trailer-value-");
+    const path = join(root, "nul-trailer.har");
+    const body = Buffer.concat([
+      protobufFrame(Buffer.from("0801", "hex")),
+      protobufFrame(Buffer.from("grpc-status: 0\r\nx-note: a\0b\r\n"), 128),
+    ]);
+    await writeFile(path, protobufHar(body));
+    const output = await cli.run({
+      arguments: [
+        "inspect-web-network-capture",
+        path,
+        "har",
+        "--record",
+        "0",
+        "--json",
+      ],
+    });
+    expect(output.exitCode, output.stdout + output.stderr).toBe(0);
+    const remote = await mcp.call("inspect_web_network_capture", {
+      capture_path: path,
+      format: "har",
+      record_ordinals: [0],
+    });
+    expect(remote.isError, JSON.stringify(remote)).not.toBe(true);
+    for (const evidence of [output.json, remote.structuredContent]) {
+      const capture = webNetworkCaptureSchema.parse(
+        parseEvidence(evidence).normalized_result,
+      );
+      expect(capture.records[0]?.binary_fields[0]).toMatchObject({
+        state: "retained",
+        content_base64: body.toString("base64"),
+      });
+      const decoded = capture.records[0]?.protobuf?.[0];
+      expect(decoded?.status).toBe("partial");
+      expect(decoded?.frames[0]).toMatchObject({ status: "complete" });
+      expect(decoded?.frames[1]).toMatchObject({
+        status: "partial",
+        examined_bytes: 0,
+        error: { reason: "Invalid gRPC-web trailer header block" },
+      });
+      expect(decoded?.fields).toMatchObject([{ number: 1, value: "1" }]);
+      expect(decoded?.frames[1]?.trailers).toEqual([
+        { name: "grpc-status", value: "0" },
+      ]);
+    }
+  },
+);
+
+captureTest(
   "excludes Protobuf values in text framing and trailer credentials through MCP",
   async ({ mcp }) => {
     const { call, root } = await prepareMcpCapture(mcp.call);

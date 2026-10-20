@@ -222,6 +222,46 @@ it("distinguishes native gRPC flags from web trailers and retains partial messag
   ).toBe("partial");
 });
 
+it.each([
+  ["NUL", "a\0b", "partial"],
+  ["bare LF", "a\nb", "partial"],
+  ["bare CR", "a\rb", "partial"],
+  ["vertical tab", "a\vb", "partial"],
+  ["DEL", "a\x7fb", "partial"],
+  ["HTTP whitespace", "\t a\tb ", "complete"],
+  ["empty value", "", "complete"],
+])(
+  "keeps %s trailer field-value grammar in text framing",
+  async (_name, value, status) => {
+    const data = Buffer.concat([
+      frame(Buffer.from("0801", "hex")),
+      frame(Buffer.from(`grpc-status: 0\r\nx-note: ${value}\r\n`), 128),
+    ]);
+    const decoded = await decodeProtobufBody(
+      Buffer.from(data.toString("base64")),
+      "grpc-web-text",
+      source,
+      same,
+      new ProtobufBudget(),
+    );
+    expect(decoded.status).toBe(status);
+    expect(decoded.frames[1]?.status).toBe(status);
+    expect(decoded.fields).toMatchObject([{ number: 1, value: "1" }]);
+    if (status === "complete") {
+      expect(decoded.frames[1]?.trailers?.[1]?.value).toBe(
+        value.replace(/^[ \t]+/, ""),
+      );
+    } else {
+      expect(decoded.frames[1]?.error?.reason).toBe(
+        "Invalid gRPC-web trailer header block",
+      );
+      expect(decoded.frames[1]?.trailers).toEqual([
+        { name: "grpc-status", value: "0" },
+      ]);
+    }
+  },
+);
+
 it("decodes independently padded base64 chunks with explicit coordinates and rejects noncanonical text", async () => {
   const first = frame(Buffer.from("0801", "hex"));
   const second = frame(Buffer.from("0802", "hex"));

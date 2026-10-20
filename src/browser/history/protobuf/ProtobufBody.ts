@@ -166,7 +166,8 @@ export const decodeProtobufBody = async (
             const colon = line.indexOf(":");
             if (
               colon <= 0 ||
-              !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(line.slice(0, colon))
+              !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(line.slice(0, colon)) ||
+              /[\x00-\x08\x0a-\x1f\x7f]/u.test(line.slice(colon + 1))
             )
               throw new Error("Malformed trailer header");
             budget.charge(512);

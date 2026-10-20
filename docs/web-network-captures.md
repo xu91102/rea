@@ -131,7 +131,10 @@ ordinal remain the source; decoding adds flat body, frame and field facts.
 
 Native gRPC admits only data-frame flags 0/1; gRPC-web additionally admits its
 terminal trailer frame. `grpc-web-text` supports independently padded base64
-chunks. Its offsets refer to **base64-decoded body bytes**; other offsets refer
+chunks. Invalid control characters in trailer field values mark the trailer
+and body partial; earlier data fields and original body bytes remain retained.
+SP/HTAB in HTTP field values remain accepted. `grpc-web-text` offsets refer
+to **base64-decoded body bytes**; other offsets refer
 to retained body bytes. Every field has a body-scoped `field_id` derived from
 its byte offset, a `frame_index`, and a `parent_field_id` for schema-driven
 nested messages or groups. Repeated field numbers remain separate occurrences.
