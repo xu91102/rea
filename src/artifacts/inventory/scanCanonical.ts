@@ -210,6 +210,7 @@ const buildInventorySnapshot = async (
     input;
   materializeDirectoryNodes(input.occurrences, input.nodes);
   const rootNode = createRootNode({
+    rootFormat: input.rootFormat,
     digest: rootDigest,
     occurrences: input.occurrences,
   });

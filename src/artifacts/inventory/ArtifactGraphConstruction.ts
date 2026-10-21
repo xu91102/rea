@@ -188,6 +188,7 @@ export const materializeDirectoryNodes = (
 };
 
 export const createRootNode = (input: {
+  readonly rootFormat: ArtifactOccurrence["artifact_format"];
   readonly digest: {
     readonly sha256: string;
     readonly bytes: number;
@@ -217,11 +218,13 @@ export const createRootNode = (input: {
     format:
       input.digest === null
         ? "directory"
-        : classifyArtifactBytes(
-            input.digest.prefix,
-            input.digest.bytes,
-            input.digest.fatSliceHeaders,
-          ),
+        : isZipPackageFormat(input.rootFormat)
+          ? "zip"
+          : classifyArtifactBytes(
+              input.digest.prefix,
+              input.digest.bytes,
+              input.digest.fatSliceHeaders,
+            ),
     contentState: "materialized",
   });
 

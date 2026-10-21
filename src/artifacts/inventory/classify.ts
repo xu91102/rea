@@ -1,4 +1,6 @@
 import { locateGodotPck } from "../GodotPckLocation.js";
+import { hasZipFooterSignature } from "../ZipRootSignature.js";
+import { namedArtifactRootFormatForPath } from "../../domain/artifactRootFormat.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
@@ -12,8 +14,7 @@ import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
   isZipPackageFormat,
-  zipPackageFormatForPath,
-  type ZipPackageFormat,
+  zipRootPackageFormatForPath,
 } from "../../domain/zipPackageFormat.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { ArtifactResourceOwner } from "../ArtifactResourceScope.js";
@@ -160,7 +161,8 @@ const classifyRootFormat = async (
   const evidence = probe.finish(archiveBytes);
   abortIfNeeded(signal);
   const lower = path.toLowerCase();
-  if (hasZipSignature(evidence.prefix)) return zipRootPackageFormat(lower);
+  if (hasZipSignature(evidence.prefix))
+    return zipRootPackageFormatForPath(lower);
   if (
     lower.endsWith(".pkg") &&
     evidence.prefix.subarray(0, 4).equals(Buffer.from("xar!"))
@@ -178,14 +180,23 @@ const classifyRootFormat = async (
     evidence.fatSliceHeaders,
     signal,
   );
-  return classifyArtifactContent(
+  const { format } = classifyArtifactContent(
     path,
     {
       ...evidence,
       ...(fatSliceHeaders === undefined ? {} : { fatSliceHeaders }),
     },
     archiveBytes,
-  ).format;
+  );
+  if (
+    (format === "file" || format === "unknown") &&
+    namedArtifactRootFormatForPath(path) === undefined &&
+    (await hasZipFooterSignature(handle, archiveBytes, () =>
+      abortIfNeeded(signal),
+    ))
+  )
+    return zipRootPackageFormatForPath(path);
+  return format;
 };
 
 /** Read exact FAT header windows missed by the bounded prefix probe. */
@@ -230,12 +241,6 @@ const readRootFatSliceHeaders = async (
   }
   return { header, sliceHeadersByOffset };
 };
-
-/** App Pack is a verified ZIP root role; nested .app members retain their observed format. */
-const zipRootPackageFormat = (lower: string): ZipPackageFormat =>
-  lower.endsWith(".app")
-    ? "app-pack"
-    : (zipPackageFormatForPath(lower) ?? "zip");
 
 const hasKolyTrailer = async (
   handle: FileHandle,

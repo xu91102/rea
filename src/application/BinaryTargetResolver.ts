@@ -42,12 +42,16 @@ import { hasGodotPckHeader } from "../domain/godotPckFormat.js";
 import {
   hasZipSignature,
   isZipPackageFormat,
-  zipPackageFormatForPath,
+  zipRootPackageFormatForPath,
 } from "../domain/zipPackageFormat.js";
+import { hasZipFooterSignature } from "../artifacts/ZipRootSignature.js";
+import { namedArtifactRootFormatForPath } from "../domain/artifactRootFormat.js";
 
 import {
   parseCodeViewData,
   parseExecutableHeader,
+  recognizeExecutableHeader,
+  UNSUPPORTED_BINARY_FORMAT,
   parsePeRecord,
   peDebugDirectoryEntry,
   peRvaToFileOffset,
@@ -213,6 +217,27 @@ export const parseBinaryTarget = async (
         hostArchitecture,
         signal,
       );
+      if (detected === undefined) {
+        // Preserve established executable and named-artifact routing. Only an
+        // otherwise unrecognized root falls back to the ZIP end signature.
+        if (
+          await hasZipFooterSignature(handle, metadata.size, () =>
+            throwIfTargetResolutionCancelled(signal),
+          )
+        )
+          return ok({
+            path,
+            sourcePath,
+            sha256: await sha256Handle(handle, path, metadata, signal),
+            kind: "archive",
+            format: zipRootPackageFormatForPath(path),
+          });
+        return err(
+          new BinaryTargetError(path, UNSUPPORTED_BINARY_FORMAT, {
+            constraint: "file_format_rejected",
+          }),
+        );
+      }
       if (!detected.ok)
         return err(
           new BinaryTargetError(path, detected.error, {
@@ -329,15 +354,14 @@ const detectArtifactFormat = async (
   if (hasZipSignature(magic.subarray(0, observed.bytesRead))) {
     // The HarmonyOS App Pack suffix `.app` is a root-input concept; a nested
     // ZIP member ending in `.app` keeps the generic zip classification.
-    if (lower.endsWith(".app")) return "app-pack";
-    return zipPackageFormatForPath(lower) ?? "zip";
+    return zipRootPackageFormatForPath(lower);
   }
   if (hasGodotPckHeader(magic.subarray(0, observed.bytesRead)))
     return "godot-pck";
   // Binary plists, including keyed archives, often use other extensions.
   if (hasBinaryPlistSignature(magic.subarray(0, observed.bytesRead)))
     return "plist";
-  const named = namedArtifactFormat(lower);
+  const named = namedArtifactRootFormatForPath(lower);
   if (named !== undefined) return named;
   if (
     lower.endsWith(".pkg") &&
@@ -389,15 +413,6 @@ const detectArtifactFormat = async (
       );
   }
   return undefined;
-};
-
-const namedArtifactFormat = (
-  lowerPath: string,
-): "asar" | "plist" | "source-map" | "javascript" | undefined => {
-  if (lowerPath.endsWith(".asar")) return "asar";
-  if (lowerPath.endsWith(".plist")) return "plist";
-  if (lowerPath.endsWith(".map")) return "source-map";
-  return /\.(?:m?js|cjs)$/u.test(lowerPath) ? "javascript" : undefined;
 };
 
 const isArchiveFormat = (
@@ -473,7 +488,7 @@ const readExecutableMetadata = async (
   handle: FileHandle,
   hostArchitecture: NodeJS.Architecture,
   signal?: AbortSignal,
-): Promise<Result<ExecutableMetadata, string>> => {
+): Promise<Result<ExecutableMetadata, string> | undefined> => {
   throwIfTargetResolutionCancelled(signal);
   const prefix = Buffer.alloc(4096);
   const prefixRead = await handle.read(prefix, 0, prefix.length, 0);
@@ -544,7 +559,11 @@ const readExecutableMetadata = async (
     fileSize,
     signal,
   );
-  const parsed = parseExecutableHeader(
+  // Keep the established short-header diagnostic without making it eligible
+  // for an unrelated archive fallback.
+  if (bytes.length < 8)
+    return parseExecutableHeader(bytes, hostArchitecture, fileSize);
+  const parsed = recognizeExecutableHeader(
     bytes,
     hostArchitecture,
     fileSize,
@@ -552,6 +571,7 @@ const readExecutableMetadata = async (
     fatEvidence,
   );
   if (
+    parsed === undefined ||
     !parsed.ok ||
     parsed.value.architecture !== "mips" ||
     parsed.value.mips.elfClass !== 32

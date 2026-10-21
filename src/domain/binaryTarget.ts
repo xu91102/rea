@@ -85,7 +85,33 @@ export const parseExecutableHeader = (
   fileSize = bytes.length,
   mzWindowsHeaderSignature?: Buffer,
   fatEvidence?: FatSliceHeaderEvidence,
-): Result<ExecutableMetadata, string> => {
+): Result<ExecutableMetadata, string> =>
+  recognizeExecutableHeader(
+    bytes,
+    hostArchitecture,
+    fileSize,
+    mzWindowsHeaderSignature,
+    fatEvidence,
+  ) ??
+  err(
+    bytes.length < 8
+      ? "truncated or unsupported binary header"
+      : UNSUPPORTED_BINARY_FORMAT,
+  );
+
+export const UNSUPPORTED_BINARY_FORMAT = "unsupported binary format";
+
+/**
+ * Return undefined only when no executable format commits to these bytes.
+ * A recognized format's rejection remains a Result error for the caller.
+ */
+export const recognizeExecutableHeader = (
+  bytes: Buffer,
+  hostArchitecture: NodeJS.Architecture,
+  fileSize = bytes.length,
+  mzWindowsHeaderSignature?: Buffer,
+  fatEvidence?: FatSliceHeaderEvidence,
+): Result<ExecutableMetadata, string> | undefined => {
   if (
     bytes.length >= 4 &&
     bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
@@ -93,7 +119,7 @@ export const parseExecutableHeader = (
     return parseElf(bytes, fileSize);
   if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
     return parseMz(bytes, fileSize, mzWindowsHeaderSignature);
-  if (bytes.length < 8) return err("truncated or unsupported binary header");
+  if (bytes.length < 8) return undefined;
   const magic = bytes.readUInt32BE(0);
   if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
     return parseThinMachO(bytes, magic, fileSize);
@@ -101,7 +127,7 @@ export const parseExecutableHeader = (
     fatEvidence?.header ?? readFatContainerHeader(bytes, fileSize);
   if (fatHeader.state !== "not-fat")
     return parseFatMachO(bytes, hostArchitecture, fatHeader, fatEvidence);
-  return err("unsupported binary format");
+  return undefined;
 };
 
 const parseThinMachO = (

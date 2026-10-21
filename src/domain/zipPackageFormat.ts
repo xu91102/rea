@@ -52,6 +52,12 @@ export const zipPackageFormatForPath = (
   return undefined;
 };
 
+/** Assign a root package role only after observing a ZIP record signature. */
+export const zipRootPackageFormatForPath = (path: string): ZipPackageFormat =>
+  path.toLowerCase().endsWith(".app")
+    ? "app-pack"
+    : (zipPackageFormatForPath(path) ?? "zip");
+
 /** Inventory lists entries, not all bytes surrounding the central directory. */
 export const ZIP_NON_ENTRY_LIMITATION =
   "ZIP inventory lists central-directory entries only. Non-entry bytes, including an APK Signing Block before the central directory or a ZIP comment after it, are not occurrences.";
