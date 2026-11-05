@@ -50,7 +50,11 @@ export const decodeObjcCategories = (input: {
     category: string,
     onTruncated?: () => void,
   ) => string[];
-  readonly protocols: (list: bigint, onTruncated?: () => void) => string[];
+  readonly protocols: (
+    list: bigint,
+    onTruncated?: () => void,
+    onCountLimit?: (message: string) => void,
+  ) => string[];
   /** Name of a class defined in this image, from its class_ro_t. */
   readonly localClassName: (address: bigint) => string;
 }): number => {
@@ -119,9 +123,20 @@ export const decodeObjcCategories = (input: {
           name,
           onTruncated,
         );
+        let protocolListLimited = false;
         const protocols = input.protocols(
           read.pointer(category + 32n),
           onTruncated,
+          (message) => {
+            protocolListLimited = true;
+            input.issues.push(
+              issue(
+                "objc_properties_categories",
+                "protocol_list_count_limit",
+                message,
+              ),
+            );
+          },
         );
         const properties = readObjcPropertiesOf(
           read,
@@ -137,6 +152,7 @@ export const decodeObjcCategories = (input: {
         const decodeReasons = [
           ...(className === null ? ["category_class_unresolved"] : []),
           ...(budgetTruncated ? ["max_records_reached"] : []),
+          ...(protocolListLimited ? ["protocol_list_count_limit"] : []),
         ];
         result.objc_categories.push({
           name,

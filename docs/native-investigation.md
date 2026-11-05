@@ -942,6 +942,12 @@ complete observation.
   Protocol instance properties use the same property-list reader as classes.
   Unreadable instance properties and unimplemented class-property lists keep
   the protocol's methods and record with partial protocol coverage.
+  An adopted-protocol list declaring more than 20,000 entries is not traversed.
+  Its independently readable class/metaclass, category or declaring protocol
+  remains available; the owner reports `protocol_list_count_limit` with partial
+  decode coverage. An empty projected protocol list under that reason does not
+  establish that the owner adopts no protocols. This count bound is separate
+  from `max_records_reached` when the caller's record budget stops traversal.
   The `swift_class_vtable_descriptors` coverage counters count examined vtable
   slots and successfully decoded slots, rather than type-section entries.
   The `objc_class_method_ivar_metadata` counters count admitted class and

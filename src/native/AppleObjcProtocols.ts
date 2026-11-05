@@ -19,12 +19,19 @@ export const createObjcProtocolReader = (input: {
   const { readers: read, result, failures } = input;
   const visited = new Set<bigint>();
   const name = (address: bigint) => read.string(read.pointer(address + 8n));
-  const list = (address: bigint, onTruncated?: () => void): string[] => {
+  const list = (
+    address: bigint,
+    onTruncated?: () => void,
+    onCountLimit?: (message: string) => void,
+  ): string[] => {
     if (address === 0n) return [];
     // `count` is plain uintptr_t data, not a pointer fixup.
     const count = read.u64(address);
-    if (count > 20000n)
-      throw new RangeError("Protocol list exceeds 20000 entries");
+    if (count > 20000n) {
+      const message = `Protocol list 0x${address.toString(16)} exceeds 20000 entries`;
+      onCountLimit?.(message);
+      return [];
+    }
     const names: string[] = [];
     for (let index = 0n; index < count; index++) {
       if (!read.admit()) {
@@ -97,7 +104,15 @@ export const createObjcProtocolReader = (input: {
       const onTruncated = () => {
         budgetTruncated = true;
       };
-      const adopted = list(read.pointer(address + 16n), onTruncated);
+      let protocolListLimited = false;
+      const adopted = list(
+        read.pointer(address + 16n),
+        onTruncated,
+        (message) => {
+          protocolListLimited = true;
+          failures.push(message);
+        },
+      );
       if (protocolName.length === 0)
         throw new TypeError("Objective-C protocol has an empty name");
       const skipped: string[] = [];
@@ -167,6 +182,7 @@ export const createObjcProtocolReader = (input: {
         ...propertyReasons,
         ...(skipped.length === 0 ? [] : ["protocol_method_selector_empty"]),
         ...(budgetTruncated ? ["max_records_reached"] : []),
+        ...(protocolListLimited ? ["protocol_list_count_limit"] : []),
       ];
       result.objc_protocols.push({
         name: protocolName,

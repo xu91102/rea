@@ -29,7 +29,7 @@ cliTest.skipIf(process.platform !== "darwin")(
     const after = join(root, "after.json");
     const bytes = machoImage({ cpu: CPU.arm64, commands: [] });
     await Promise.all([writeFile(first, bytes), writeFile(second, bytes)]);
-    const { call } = await connectLocalToolsMcp({
+    const environment = {
       PATH: process.env.PATH ?? "",
       REA_ANALYSIS_PROVIDER: "auto",
       HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
@@ -38,12 +38,21 @@ cliTest.skipIf(process.platform !== "darwin")(
       REA_IDA_MCP_CONFIG: "/rea-unconfigured-deep-provider/ida-mcp.json",
       REA_KUNA_COMMAND: "/rea-unconfigured-deep-provider/kuna",
       REA_KUNA_CACHE_DIR: "/rea-unconfigured-deep-provider/kuna-cache",
-    });
-    const good = async (name: string, arguments_: Record<string, unknown>) => {
-      const result = await call(name, arguments_);
-      expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      return result;
     };
+    const connect = async () => {
+      const { call } = await connectLocalToolsMcp(environment);
+      const good = async (
+        name: string,
+        arguments_: Record<string, unknown>,
+      ) => {
+        const result = await call(name, arguments_);
+        expect(result.isError, JSON.stringify(result)).not.toBe(true);
+        return result;
+      };
+      return { call, good };
+    };
+    const { good: otherInvestigation } = await connect();
+    const { call, good } = await connect();
     const unknown = {
       question: "Does this function reach the network?",
       domain: "network",
@@ -57,10 +66,20 @@ cliTest.skipIf(process.platform !== "darwin")(
       ],
       relationships: [],
     };
-    await good("open_binary", { path: second });
-    await good("inspect_native_dispatch_metadata", { max_records: 100 });
-    await good("record_unknown", { ...unknown, severity: "high" });
-    await good("close_binary", { snapshot_path: conflicting, overwrite: true });
+    // Each investigation creates its own revision before snapshot import conflicts.
+    // Closing a target does not discard the investigation's retained unknowns.
+    await otherInvestigation("open_binary", { path: second });
+    await otherInvestigation("inspect_native_dispatch_metadata", {
+      max_records: 100,
+    });
+    await otherInvestigation("record_unknown", {
+      ...unknown,
+      severity: "high",
+    });
+    await otherInvestigation("close_binary", {
+      snapshot_path: conflicting,
+      overwrite: true,
+    });
     await good("open_binary", { path: first });
     const original = parseEvidence(
       (await good("inspect_native_dispatch_metadata", { max_records: 100 }))

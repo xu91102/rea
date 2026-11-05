@@ -361,12 +361,21 @@ export const decodeObjcDispatchFacets = (input: {
       location: hex(read.pointer(ro + 64n)),
       onTruncated,
     });
-    const protocols = protocolReader.list(read.pointer(ro + 40n), onTruncated);
+    let protocolListLimited = false;
+    const protocols = protocolReader.list(
+      read.pointer(ro + 40n),
+      onTruncated,
+      (message) => {
+        protocolListLimited = true;
+        failures.push(message);
+      },
+    );
     const classDecodeReasons = [
       ...(superclass.name === null && !root
         ? ["superclass_binding_unresolved"]
         : []),
       ...(classListTruncated ? ["max_records_reached"] : []),
+      ...(protocolListLimited ? ["protocol_list_count_limit"] : []),
     ];
     result.objc_classes.push({
       name,
@@ -449,7 +458,8 @@ export const decodeObjcDispatchFacets = (input: {
     issues: categoryIssues,
     admit: () => budget.admit(),
     methods,
-    protocols: (list, onTruncated) => protocolReader.list(list, onTruncated),
+    protocols: (list, onTruncated, onCountLimit) =>
+      protocolReader.list(list, onTruncated, onCountLimit),
     localClassName: (address) => readLocalClass(read, address).name,
   });
   return {
