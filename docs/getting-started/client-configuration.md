@@ -282,6 +282,10 @@ in the file the installed app reads:
   register in `Claude-3p`. See [#4432](https://github.com/morluto/rea/issues/4432)
   for the reported build and manual registration evidence.
 
+When setup cannot determine the configuration location, the interactive client
+picker shows the reason and recovery instructions before approval. An unresolved
+location is separate from a configuration file that needs repair.
+
 Quit Claude Desktop fully before approving setup; closing its window is not
 enough. A running Claude Desktop can rewrite its configuration from memory and
 drop the registration. This was observed with the Windows MSIX build. Start

@@ -18,6 +18,7 @@ import { parse as parseToml } from "smol-toml";
 
 import { manualRegistrationRemediation } from "../../../src/application/SupportedClients.js";
 import type { SetupResult } from "../../../src/application/SetupTypes.js";
+import { CLAUDE_DESKTOP_PACKAGE_FAMILY } from "../../fixtures/claudeDesktop.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
@@ -672,6 +673,45 @@ describe("interactive setup journey", () => {
   });
 });
 
+describe("interactive setup location guidance", () => {
+  it.each([false, true])(
+    "explains an unresolved Claude Desktop location before selection (accessible: %s)",
+    async (accessible) => {
+      const home = await createTestTempDirectory("rea-setup-migrated-claude-");
+      const environment = {
+        USERPROFILE: home,
+        APPDATA: join(home, "AppData", "Roaming"),
+        LOCALAPPDATA: join(home, "AppData", "Local"),
+      };
+      const migratedConfig = join(
+        environment.LOCALAPPDATA,
+        "Claude-Data",
+        CLAUDE_DESKTOP_PACKAGE_FAMILY.toLowerCase(),
+        "claude_desktop_config.json",
+      );
+      const malformedConfig = join(home, ".claude.json");
+      await mkdir(dirname(migratedConfig), { recursive: true });
+      await writeFile(migratedConfig, "{}\n");
+      await writeFile(malformedConfig, "{");
+
+      const result = await runSetupLocationJourney(environment, accessible);
+      expect(result.decision.cancelled).toBe(true);
+      expect(await readFile(migratedConfig, "utf8")).toBe("{}\n");
+      expect(await readFile(malformedConfig, "utf8")).toBe("{");
+      expect(result.output).toContain("Configuration location unresolved");
+      expect(result.output).toContain(migratedConfig);
+      expect(result.output).toContain(
+        "register REA manually in the active file",
+      );
+      expect(result.output).toContain(
+        accessible
+          ? "Configure Claude Code? Existing configuration needs repair before setup"
+          : "Claude Code (Existing configuration needs repair before setup)",
+      );
+    },
+  );
+});
+
 describe("interactive setup completion", () => {
   it.each([
     { npmCommand: "", userAgent: "", launcher: "rea" },
@@ -827,13 +867,49 @@ const step = (prompt: string, input: string): JourneyStep => ({
   input,
 });
 
-const runJourney = async (
+const runSetupLocationJourney = (
+  environment: NodeJS.ProcessEnv,
+  accessible: boolean,
+): Promise<JourneyResult> => {
+  const steps = accessible
+    ? [
+        step("Configure Claude Code?", "\r"),
+        step("Configure Claude Desktop?", "\u0003"),
+      ]
+    : [
+        step("Which agents should use REA?", "\u001b[B"),
+        step("Claude Desktop (", "\u0003"),
+      ];
+  const script = [
+    'import { runSetup } from "./dist/application/Setup.js";',
+    'import { systemDoctorHost } from "./dist/application/Doctor.js";',
+    'import { systemSetupHost } from "./dist/application/SetupHost.js";',
+    'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
+    "const environment = " + JSON.stringify(environment) + ";",
+    'const doctorHost = systemDoctorHost({ platform: "win32", environment });',
+    "const host = systemSetupHost(doctorHost, environment);",
+    "let decision;",
+    "const result = await runSetup(",
+    "  { approved: false, installHopper: false, structured: false },",
+    "  host,",
+    "  async (actions, context) => (decision = await confirmInteractiveSetup(actions, " +
+      JSON.stringify(accessible) +
+      ", context)),",
+    ");",
+    'if (result.status !== "cancelled" || result.appliedActions.length > 0) throw new Error(JSON.stringify(result));',
+    "process.stdout.write(" +
+      JSON.stringify("\n" + decisionMarker) +
+      ' + JSON.stringify(decision) + "\\n");',
+  ].join("\n");
+  return runJourneyScript(steps, script);
+};
+
+const runJourney = (
   steps: readonly JourneyStep[],
   accessible = false,
   journeyActions: readonly object[] = agentActions,
   initialClientIds: readonly string[] = [],
 ): Promise<JourneyResult> => {
-  const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   const script = [
     'import { confirmInteractiveSetup } from "./dist/cli/interactiveSetup.js";',
     `const actions = ${JSON.stringify(journeyActions)};`,
@@ -845,7 +921,14 @@ const runJourney = async (
     "}",
     `process.stdout.write(${JSON.stringify(`\n${decisionMarker}`)} + JSON.stringify(decision) + "\\n");`,
   ].join("\n");
+  return runJourneyScript(steps, script);
+};
 
+const runJourneyScript = async (
+  steps: readonly JourneyStep[],
+  script: string,
+): Promise<JourneyResult> => {
+  const isolatedHome = await createTestTempDirectory("rea-cli-setup-test-");
   return new Promise<JourneyResult>((resolvePromise, reject) => {
     let output = "";
     let nextStep = 0;

@@ -26,6 +26,9 @@ const clientDisplayNames: ReadonlyMap<string, string> = new Map(
   ]),
 );
 
+const clientDisplayName = (name: string): string =>
+  clientDisplayNames.get(name) ?? name;
+
 const promptStreams = {
   input: process.stdin,
   output: process.stderr,
@@ -117,7 +120,7 @@ export const renderInteractiveSetupResult = (
   if (result.status === "ready") {
     const changedClients = Object.entries(result.clients)
       .filter(([, client]) => client.status === "configured")
-      .map(([client]) => clientDisplayNames.get(client) ?? client);
+      .map(([client]) => clientDisplayName(client));
     const readyClients = readyAgentClients(result, changedClients);
     renderReadyCapabilities(result, readyClients, environment);
     outro(
@@ -185,14 +188,17 @@ const selectSetupActions = async (
   return selectedActionIds;
 };
 
-const clientHint = (state: SetupClientState): string =>
-  state.configured
+const clientHint = (state: SetupClientState): string => {
+  if (state.client.configPathError !== undefined)
+    return "Configuration location unresolved · see details above";
+  return state.configured
     ? "REA already configured · selected from existing configuration"
     : state.status === "invalid"
       ? "Existing configuration needs repair before setup"
       : state.detected
         ? "Detected · choose to configure"
         : "Not detected · configuration is still available";
+};
 
 const selectClients = async (
   states: readonly SetupClientState[],
@@ -206,7 +212,7 @@ const selectClients = async (
     message: "Which agents should use REA?",
     options: states.map((state) => ({
       value: state.client.name,
-      label: clientDisplayNames.get(state.client.name) ?? state.client.name,
+      label: clientDisplayName(state.client.name),
       hint: clientHint(state),
     })),
     initialValues: states
@@ -232,7 +238,7 @@ const selectClientsAccessibly = async (
     const included = await confirm({
       ...promptStreams,
       ...(signal === undefined ? {} : { signal }),
-      message: `Configure ${clientDisplayNames.get(state.client.name) ?? state.client.name}? ${clientHint(state)}`,
+      message: `Configure ${clientDisplayName(state.client.name)}? ${clientHint(state)}`,
       initialValue: initial.has(state.client.name),
       vertical: true,
     });
@@ -248,8 +254,19 @@ const renderDetectedSummary = (states: readonly SetupClientState[]): void => {
   writeLine(
     detected.length === 0
       ? "◆  No agents detected. Choose any supported agent below."
-      : `◆  Detected: ${humanList(detected.map(({ client }) => clientDisplayNames.get(client.name) ?? client.name))}`,
+      : `◆  Detected: ${humanList(detected.map(({ client }) => clientDisplayName(client.name)))}`,
   );
+  for (const { client } of states) {
+    if (client.format === "unsupported" || client.configPathError === undefined)
+      continue;
+    // Print the diagnostic as text, including unusual path characters.
+    const detail = client.configPathError.replace(
+      /\p{Cc}/gu,
+      (character) =>
+        `\\u${character.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    );
+    writeLine(`│  ${clientDisplayName(client.name)}: ${detail}`);
+  }
 };
 
 const renderKeyboardHelp = (accessible: boolean): void => {
