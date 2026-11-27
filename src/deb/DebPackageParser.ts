@@ -1125,9 +1125,10 @@ const md5Paths = (
       const line = text.slice(start, trimmedEnd);
       // GNU md5sum prefixes a line with a backslash when it escaped the name
       // (backslash, newline or carriage return). The digest is separated from
-      // the path by a space and a space or `*`; other spaces stay in the path.
+      // the path by a space and a space or `*`. LF is already consumed above.
+      // Other Unicode separators can be part of the filename.
       const escaped = line.startsWith("\\");
-      const match = /^[0-9a-f]{32} [ *](.*)$/iu.exec(
+      const match = /^[0-9a-f]{32} [ *]([^\r\n]*)$/iu.exec(
         escaped ? line.slice(1) : line,
       );
       const name =

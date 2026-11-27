@@ -76,6 +76,44 @@ cliTest(
   },
 );
 
+cliTest(
+  "keeps Unicode separators inside md5sums filenames",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-deb-cli-md5-names-");
+    const path = join(root, "unicode.deb");
+    const names = [
+      "usr/share/doc/hello/section\u2028notes.txt",
+      "usr/share/doc/hello/summary\u2029appendix.txt",
+      "usr/share/doc/hello/plain.txt",
+    ];
+    const md5sums = names
+      .map((name) => `d41d8cd98f00b204e9800998ecf8427e  ${name}\n`)
+      .join("");
+    await writeFile(
+      path,
+      debPackageFixture({
+        md5sums,
+        dataEntries: names.map((name) => ({ name })),
+      }),
+    );
+
+    const result = await cli.run({
+      arguments: ["inspect-deb-package", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const { normalized_result: report } = completeDebEvidenceSchema.parse(
+      result.json,
+    );
+    expect(report.data_entries.map((entry) => entry.path)).toEqual(names);
+    expect(report.md5sums_cross_check).toEqual({
+      listed: 3,
+      present: 3,
+      missing_from_inventory: 0,
+      missing_from_md5sums: 0,
+    });
+  },
+);
+
 cliTest("refuses a file that is not a Debian ar archive", async ({ cli }) => {
   const root = await createTestTempDirectory("rea-deb-cli-malformed-");
   const path = join(root, "not.deb");
