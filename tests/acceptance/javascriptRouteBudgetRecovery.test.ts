@@ -34,6 +34,12 @@ cliTest(
     expect(unpublished.json).toMatchObject({
       code: "resource_constraint",
       details: {
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "bytes",
+          limit: 1024 * 1024,
+          unit: "bytes",
+        },
         partial_observation: {
           evidence_id: expect.stringMatching(/^ev_/),
           normalized_result: expect.any(Object),
@@ -78,7 +84,16 @@ cliTest(
     expect(wide.json).toMatchObject({
       code: "resource_constraint",
       retryable: false,
-      details: { reported_limits: { limit_bytes: 1024 * 1024 } },
+      details: {
+        reported_limits: { limit_bytes: 1024 * 1024 },
+        refusal: {
+          kind: "fixed_ceiling",
+          operation: "inspect_analysis_view",
+          allowance_kind: "bytes",
+          limit: 1024 * 1024,
+          unit: "bytes",
+        },
+      },
     });
     const wideError = wide.json as { remediation: { action: string } };
     expect(wideError.remediation.action).toContain("select fewer fields");

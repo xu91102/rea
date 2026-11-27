@@ -339,7 +339,20 @@ it("recovers the complete parent when a single reference exceeds the page budget
     const stopped = await view("incoming_references", 1, 1);
     expect(parseMcpToolError(stopped).error).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { parent_evidence_id: parent.evidence_id } },
+      retryable: false,
+      details: {
+        reported_limits: {
+          parent_evidence_id: parent.evidence_id,
+          limit_bytes: 1024 * 1024,
+        },
+        refusal: {
+          kind: "fixed_ceiling",
+          operation: "inspect_analysis_view",
+          allowance_kind: "bytes",
+          limit: 1024 * 1024,
+          unit: "bytes",
+        },
+      },
     });
     const other = await view("references", 0, 1);
     expect(other.isError).not.toBe(true);

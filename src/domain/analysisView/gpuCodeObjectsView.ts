@@ -19,8 +19,9 @@ import {
   type SummaryAnalysisView,
 } from "./analysisViewShape.js";
 import {
-  ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
   analysisViewInputError,
+  analysisViewPageRecovery,
   invalidAnalysisViewSubject,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
@@ -275,14 +276,14 @@ export const projectGpuCodeObjectsView = (
         "PTX text page must end and start on Unicode scalar boundaries; offsets use UTF-16 code units",
       );
     const text = artifact.text.slice(view.offset, end);
-    if (jsonValueByteLength(text, 1024 * 1024) > 1024 * 1024)
+    if (jsonValueByteLength(text, PAGE_BYTES) > PAGE_BYTES)
       return err(
         new AnalysisResourceConstraintError(
           "inspect_analysis_view",
           "memory",
           "PTX page exceeds the 1 MiB response budget; lower limit",
-          { maximum_page_bytes: 1024 * 1024 },
-          ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+          { maximum_page_bytes: PAGE_BYTES },
+          analysisViewPageRecovery("Lower the PTX text page limit."),
         ),
       );
     return ok({
@@ -382,14 +383,14 @@ export const projectGpuCodeObjectsView = (
           projected[key] = value;
       return projected;
     });
-  if (jsonValueByteLength(items, 1024 * 1024) > 1024 * 1024)
+  if (jsonValueByteLength(items, PAGE_BYTES) > PAGE_BYTES)
     return err(
       new AnalysisResourceConstraintError(
         "inspect_analysis_view",
         "memory",
         "GPU page exceeds the 1 MiB response budget; select fewer fields or rows",
-        { maximum_page_bytes: 1024 * 1024 },
-        ANALYSIS_VIEW_PAGE_BUDGET_RECOVERY,
+        { maximum_page_bytes: PAGE_BYTES },
+        analysisViewPageRecovery(),
       ),
     );
   return ok({

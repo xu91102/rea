@@ -2153,8 +2153,20 @@ it("pages retained raw array rows without losing the parent and refuses an overs
   });
   expect(parsed.evidence_links).toEqual([parent.evidence_id]);
   const oversized = parseMcpToolError(await call(2, 1)).error;
-  expect(oversized.code).toBe("resource_constraint");
-  expect(oversized.remediation.action).toContain("1,048,576-byte");
+  expect(oversized).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      reported_limits: { maximum_page_bytes: 1024 * 1024 },
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "bytes",
+        limit: 1024 * 1024,
+        unit: "bytes",
+      },
+    },
+  });
+  expect(oversized.remediation.action).toContain("complete parent Evidence");
   expect((await call(0, 1)).isError).not.toBe(true);
 });
 

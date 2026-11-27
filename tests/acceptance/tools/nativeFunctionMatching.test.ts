@@ -898,6 +898,13 @@ cliTest(
       code: "resource_constraint",
       details: {
         resource: "transport",
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "bytes",
+          limit: 1024 * 1024,
+          unit: "bytes",
+          narrowing: expect.stringContaining("next_offset"),
+        },
         reported_limits: {
           source_evidence_id: reads[0]!.evidence_id,
           next_offset: 1,

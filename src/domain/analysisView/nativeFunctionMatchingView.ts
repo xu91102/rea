@@ -10,7 +10,11 @@ import {
 } from "../native/functionMatching.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
-import { invalidAnalysisView } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_BYTES as BYTE_SOURCE_PAGE_BYTES,
+  analysisViewPageRecovery,
+  invalidAnalysisView,
+} from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -107,7 +111,6 @@ interface Checked {
 const checked = new WeakMap<object, Checked>();
 const readReport = createAnalysisViewResultReader(nativeFunctionMatchingSchema);
 // Leave room for the Evidence envelope and duplicated MCP text/structured output.
-const BYTE_SOURCE_PAGE_BYTES = 1024 * 1024;
 const BYTE_SOURCE_PROJECTION_BYTES =
   BYTE_SOURCE_PAGE_BYTES -
   (jsonValueByteLength({ view_digest: "0".repeat(64) }) - 1);
@@ -357,13 +360,11 @@ export const projectNativeFunctionMatchingView = (
                   next_offset: source.next_offset,
                 }),
           },
-          {
-            retryable: false,
-            remediationAction:
-              source === undefined
-                ? "Narrow the selection or inspect the original matching Evidence."
-                : "Inspect the original matching Evidence, or export it if retained; use next_offset to continue after the oversized source.",
-          },
+          analysisViewPageRecovery(
+            source === undefined
+              ? "Narrow the selection or inspect the original matching Evidence."
+              : "Inspect the original matching Evidence, or export it if retained; use next_offset to continue after the oversized source.",
+          ),
         ),
       );
     if (bytes > BYTE_SOURCE_PROJECTION_BYTES) return tooLarge();

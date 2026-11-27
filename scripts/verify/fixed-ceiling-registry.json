@@ -156,6 +156,12 @@
       "reason": "The analysis-view projection allowance is a resource policy."
     }
   },
+  "src/domain/analysisView/analysisViewErrors.ts": {
+    "\"The analysis-view page allowance\"": {
+      "class": "representation",
+      "reason": "Bounds one materialized page projection. Narrow the selection or read the complete parent Evidence."
+    }
+  },
   "src/domain/apiContract/GraphqlDocuments.ts": {
     "`The GraphQL AST nesting allowance of ${String(GRAPHQL_CONTRACT_LIMITS.astDepth)} levels`": {
       "class": "representation",

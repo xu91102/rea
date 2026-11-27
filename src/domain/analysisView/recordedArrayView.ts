@@ -9,10 +9,12 @@ import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { pageViewCoverage } from "./analysisViewCoverage.js";
-import { analysisViewInputError } from "./analysisViewErrors.js";
+import {
+  ANALYSIS_VIEW_PAGE_BYTES as PAGE_BYTES,
+  analysisViewInputError,
+  analysisViewPageRecovery,
+} from "./analysisViewErrors.js";
 import type { recordedArrayViewSchema } from "./analysisViewRequest.js";
-
-const PAGE_BYTES = 1024 * 1024;
 
 /**
  * Parent parameters sit on the Evidence root. This page stores them under
@@ -142,11 +144,9 @@ export const projectRecordedArrayView = (
         "memory",
         "Recorded array view exceeds the 1 MiB page allowance.",
         { maximum_page_bytes: PAGE_BYTES },
-        {
-          retryable: false,
-          remediationAction:
-            "The selected path or one recorded value exceeds the 1,048,576-byte analysis-view page allowance. Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
-        },
+        analysisViewPageRecovery(
+          "Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
+        ),
       ),
     );
   if (bytes > PAGE_BYTES) return tooLarge();

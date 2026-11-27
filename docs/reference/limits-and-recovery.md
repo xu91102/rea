@@ -574,6 +574,11 @@ It has three variants. Each one projects under `details.refusal` with the
 | `adjustable_budget`  | an `AnalysisSettingLimit`, or a `control_kind: "parameter"` limit, bound as `limit`                                                      | `control`, `setting` and `source` (settings only), `effective_value`, `unit`, `range`, `default_value` (parameters only), optional `required_value` |
 | `ambiguous_selector` | `AnalysisInputError` option `ambiguousSelector: { field, candidates }`                                                                   | `field`, `candidates`                                                                                                                               |
 
+The shared 1 MiB analysis-view page allowance reports a `fixed_ceiling`
+with a numeric `limit` in bytes and the view's recovery in `narrowing`.
+A smaller selection can fit the page when the view supports it. An
+oversized row can still be read from its complete parent Evidence.
+
 Presentation is total over these variants. Authored remediation still wins,
 so a producer that binds a parameter or setting limit omits it unless it adds
 something the facts cannot say. Without it, the variant names the recovery:
