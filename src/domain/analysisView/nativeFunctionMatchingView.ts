@@ -10,13 +10,14 @@ import {
 } from "../native/functionMatching.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { filterSet } from "./selectViewRows.js";
 import {
   ANALYSIS_VIEW_PAGE_BYTES as BYTE_SOURCE_PAGE_BYTES,
   analysisViewPageRecovery,
   invalidAnalysisView,
 } from "./analysisViewErrors.js";
 import {
-  boundedViewMessages,
+  boundedViewLimitations,
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
@@ -152,18 +153,15 @@ const sharedContext = (
   parent_operation: "match_native_functions" as const,
   parent_digest: parent.evidenceId.slice(3),
   artifact: null,
-  limitations: boundedViewMessages(
-    [...parent.limitations, ...report.limitations],
-    parent.evidenceId,
-    "limitations",
+  limitations: boundedViewLimitations(
+    parent,
+    report.limitations,
     report.byte_sources_count ? [nativeFunctionByteSourceGuidance] : [],
   ),
   unknowns: [
     "Unpaired observations and page exhaustion do not establish binary-wide function absence or behavioral equivalence.",
   ],
 });
-const selected = (values: readonly string[] | undefined) =>
-  values === undefined ? undefined : new Set(values);
 const filterRows = (entry: Checked, view: MatchRequest): readonly number[] => {
   const key = JSON.stringify([
     view.collection,
@@ -174,11 +172,11 @@ const filterRows = (entry: Checked, view: MatchRequest): readonly number[] => {
     view.collection === "functions" ? view.names : null,
   ]);
   if (entry.recent?.key === key) return entry.recent.rows;
-  const states = selected(view.states),
-    ids = selected(view.match_ids),
-    functions = selected(view.function_ids),
-    sides = selected(view.collection === "functions" ? view.sides : undefined),
-    names = selected(view.collection === "functions" ? view.names : undefined);
+  const states = filterSet<string>(view.states),
+    ids = filterSet(view.match_ids),
+    functions = filterSet(view.function_ids),
+    sides = filterSet(view.collection === "functions" ? view.sides : undefined),
+    names = filterSet(view.collection === "functions" ? view.names : undefined);
   const matchesIdentity = (row: { state: string; match_id: string }): boolean =>
     (states === undefined || states.has(row.state)) &&
     (ids === undefined || ids.has(row.match_id));
@@ -322,8 +320,8 @@ export const projectNativeFunctionMatchingView = (
       return invalidAnalysisView(
         "This historical report did not record byte-source qualifications; inspect its linked Evidence.",
       );
-    const sides = selected(view.sides),
-      ids = selected(view.evidence_ids);
+    const sides = filterSet(view.sides),
+      ids = filterSet(view.evidence_ids);
     const items: z.output<typeof nativeFunctionByteSourceSchema>[] = [];
     const fixed = {
       kind: "function-matches" as const,
